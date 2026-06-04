@@ -188,6 +188,7 @@ const AcknowledgementLetter: React.FC<AcknowledgementLetterProps> = ({
         <div className="text-center mb-8 pb-6 border-b-2 border-black" style={{ borderColor: '#000000' }}>
           {/* Company Logo */}
           <div className="flex justify-center mb-6">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img 
               src="/logo.png" 
               alt="Company Logo" 

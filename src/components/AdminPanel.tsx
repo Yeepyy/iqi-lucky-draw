@@ -10,7 +10,6 @@ import {
   addPrize,
   updatePrize,
   deletePrize,
-  searchParticipants,
 } from '@/lib/database';
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { Prize, Participant, DrawResult } from '@/types';
@@ -51,6 +50,57 @@ const AdminPanel: React.FC = () => {
     showUnit: true,
     showAgent: true,
   });
+
+  // === DERIVED STATE (Moved here to prevent 'use-before-define' build errors) ===
+  const requestSort = (key: string) => {
+    let direction: 'ascending' | 'descending' = 'ascending';
+    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'ascending') {
+      direction = 'descending';
+    }
+    setSortConfig({ key, direction });
+  };
+
+  const sortedItems = (items: any[]) => {
+    if (!sortConfig) {
+      return items;
+    }
+    return [...items].sort((a, b) => {
+      let aValue = a[sortConfig.key];
+      let bValue = b[sortConfig.key];
+
+      if (sortConfig.key === 'createdAt' || sortConfig.key === 'drawDate') {
+        aValue = new Date((aValue as any)?.seconds ? (aValue as any).seconds * 1000 : aValue);
+        bValue = new Date((bValue as any)?.seconds ? (bValue as any).seconds * 1000 : bValue);
+      }
+
+      if (activeTab === 'results' && sortConfig.key === 'winnerName') {
+        const participantA = participants.find(p => p.id === a.participantId);
+        const participantB = participants.find(p => p.id === b.participantId);
+        aValue = participantA ? participantA.fullName : '';
+        bValue = participantB ? participantB.fullName : '';
+      }
+
+      if (aValue < bValue) return sortConfig.direction === 'ascending' ? -1 : 1;
+      if (aValue > bValue) return sortConfig.direction === 'ascending' ? 1 : -1;
+      return 0;
+    });
+  };
+
+  const getSortIndicator = (key: string) => {
+    if (!sortConfig || sortConfig.key !== key) return null;
+    return sortConfig.direction === 'ascending' ? ' ▲' : ' ▼';
+  };
+
+  const filteredParticipants = participants.filter(p => {
+    if (!searchTerm.trim()) return true;
+    const lower = searchTerm.toLowerCase();
+    return p.fullName.toLowerCase().includes(lower) || p.icPassport.toLowerCase().includes(lower) || p.phoneNumber.toLowerCase().includes(lower) || (p.agentName || '').toLowerCase().includes(lower);
+  });
+
+  const sortedPrizes = sortedItems(prizes) as Prize[];
+  const sortedParticipants = sortedItems(filteredParticipants) as Participant[];
+  const sortedResults = sortedItems(drawResults) as DrawResult[];
+  // ==============================================================================
 
   useEffect(() => {
     loadData();
@@ -269,68 +319,6 @@ const AdminPanel: React.FC = () => {
     link.click();
     toast.success('CSV exported successfully');
   };
-
-  const requestSort = (key: string) => {
-    let direction: 'ascending' | 'descending' = 'ascending';
-    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'ascending') {
-      direction = 'descending';
-    }
-    setSortConfig({ key, direction });
-  };
-
-  const sortedItems = (items: any[]) => {
-    if (!sortConfig) {
-      return items;
-    }
-    return [...items].sort((a, b) => {
-      let aValue = a[sortConfig.key];
-      let bValue = b[sortConfig.key];
-
-      // Handle special cases like dates
-      if (sortConfig.key === 'createdAt' || sortConfig.key === 'drawDate') {
-        aValue = new Date((aValue as any)?.seconds ? (aValue as any).seconds * 1000 : aValue);
-        bValue = new Date((bValue as any)?.seconds ? (bValue as any).seconds * 1000 : bValue);
-      }
-
-      // Handle nested properties for results
-      if (activeTab === 'results' && sortConfig.key === 'winnerName') {
-        const participantA = participants.find(p => p.id === a.participantId);
-        const participantB = participants.find(p => p.id === b.participantId);
-        aValue = participantA ? participantA.fullName : '';
-        bValue = participantB ? participantB.fullName : '';
-      }
-
-      if (aValue < bValue) {
-        return sortConfig.direction === 'ascending' ? -1 : 1;
-      }
-      if (aValue > bValue) {
-        return sortConfig.direction === 'ascending' ? 1 : -1;
-      }
-      return 0;
-    });
-  };
-
-  const getSortIndicator = (key: string) => {
-    if (!sortConfig || sortConfig.key !== key) {
-      return null;
-    }
-    return sortConfig.direction === 'ascending' ? ' ▲' : ' ▼';
-  };
-
-  const filteredParticipants = participants.filter(p => {
-    if (!searchTerm.trim()) return true;
-    const lower = searchTerm.toLowerCase();
-    return (
-      p.fullName.toLowerCase().includes(lower) ||
-      p.icPassport.toLowerCase().includes(lower) ||
-      p.phoneNumber.toLowerCase().includes(lower) ||
-      (p.agentName || '').toLowerCase().includes(lower)
-    );
-  });
-
-  const sortedPrizes = sortedItems(prizes) as Prize[];
-  const sortedParticipants = sortedItems(filteredParticipants) as Participant[];
-  const sortedResults = sortedItems(drawResults) as DrawResult[];
 
 
 

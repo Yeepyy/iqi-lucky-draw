@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Prize } from '@/types';
 import dynamic from 'next/dynamic';
 
-// @ts-ignore
+// @ts-expect-error - react-confetti might lack type definitions
 const Confetti = dynamic(() => import('react-confetti'), { ssr: false });
 
 interface SpinWheelProps {
