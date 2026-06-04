@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import toast from 'react-hot-toast';
+import toast, { Toaster } from 'react-hot-toast';
 import {
   getAllPrizes,
   getAllParticipants,
@@ -50,6 +50,10 @@ const AdminPanel: React.FC = () => {
     showUnit: true,
     showAgent: true,
   });
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+  const [loginForm, setLoginForm] = useState({ id: '', password: '' });
+  const [authSettings, setAuthSettings] = useState({ loginId: 'admin', password: 'coreteam123' });
 
   // === DERIVED STATE (Moved here to prevent 'use-before-define' build errors) ===
   const requestSort = (key: string) => {
@@ -103,8 +107,16 @@ const AdminPanel: React.FC = () => {
   // ==============================================================================
 
   useEffect(() => {
-    loadData();
+    const stored = sessionStorage.getItem('adminAuth');
+    if (stored === 'true') setIsAuthenticated(true);
+    setIsMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (isAuthenticated && isMounted) {
+      loadData();
+    }
+  }, [isAuthenticated, isMounted]);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -119,6 +131,9 @@ const AdminPanel: React.FC = () => {
           const db = getFirestore();
           const d = await getDoc(doc(db, 'settings', 'formFields'));
           if (d.exists()) setFormSettings(d.data() as any);
+
+          const authD = await getDoc(doc(db, 'settings', 'adminAuth'));
+          if (authD.exists()) setAuthSettings(authD.data() as any);
         } catch (e) {}
       };
 
@@ -261,12 +276,115 @@ const AdminPanel: React.FC = () => {
     setIsLoading(true);
     try {
       const db = getFirestore();
+      const resultToDelete = drawResults.find(r => r.id === id);
+      
       await deleteDoc(doc(db, 'drawResults', id));
+
+      if (resultToDelete && resultToDelete.prizeId) {
+        const prizeRef = doc(db, 'prizes', resultToDelete.prizeId);
+        const prizeSnap = await getDoc(prizeRef);
+        if (prizeSnap.exists()) {
+          const current = prizeSnap.data().currentWinners || 0;
+          await updateDoc(prizeRef, { currentWinners: Math.max(0, current - 1) });
+        }
+      }
+
       toast.success('Draw result deleted successfully');
       await loadData();
     } catch (error) {
       console.error('Error deleting result:', error);
       toast.error('Failed to delete draw result');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDeleteAllParticipants = async () => {
+    if (!participants.length) return toast.error('No participants to delete');
+    if (!confirm('🚨 WARNING: Are you sure you want to delete ALL participants?\n\nThis action cannot be undone!')) return;
+    if (!confirm('FINAL WARNING: Are you ABSOLUTELY sure? This will wipe all customer data!')) return;
+    
+    setIsLoading(true);
+    try {
+      const db = getFirestore();
+      await Promise.all(participants.map(p => deleteDoc(doc(db, 'participants', p.id))));
+      toast.success('All participants deleted successfully');
+      await loadData();
+    } catch (error) {
+      console.error('Error deleting all participants:', error);
+      toast.error('Failed to delete all participants');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDeleteAllResults = async () => {
+    if (!drawResults.length) return toast.error('No results to delete');
+    if (!confirm('🚨 WARNING: Are you sure you want to delete ALL draw results?\n\nThis action cannot be undone!')) return;
+    if (!confirm('FINAL WARNING: Are you ABSOLUTELY sure? This will wipe all spin records!')) return;
+
+    setIsLoading(true);
+    try {
+      const db = getFirestore();
+      await Promise.all(drawResults.map(r => deleteDoc(doc(db, 'drawResults', r.id))));
+      
+      // 重置所有奖品的 currentWinners 为 0
+      await Promise.all(prizes.map(p => updateDoc(doc(db, 'prizes', p.id), { currentWinners: 0 })));
+      
+      toast.success('All draw results deleted successfully');
+      await loadData();
+    } catch (error) {
+      console.error('Error deleting all results:', error);
+      toast.error('Failed to delete all draw results');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    try {
+      const db = getFirestore();
+      const authDoc = await getDoc(doc(db, 'settings', 'adminAuth'));
+      
+      let currentId = 'admin';
+      let currentPass = 'coreteam123';
+      
+      if (authDoc.exists()) {
+        const data = authDoc.data();
+        currentId = data.loginId;
+        currentPass = data.password;
+      } else {
+        await setDoc(doc(db, 'settings', 'adminAuth'), { loginId: currentId, password: currentPass });
+      }
+
+      if (loginForm.id === currentId && loginForm.password === currentPass) {
+        setIsAuthenticated(true);
+        sessionStorage.setItem('adminAuth', 'true');
+        toast.success('Login successful');
+      } else {
+        toast.error('Invalid ID or Password');
+      }
+    } catch (error) {
+      console.error('Login error:', error);
+      toast.error('Failed to verify credentials');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSaveAuthSettings = async () => {
+    if (!authSettings.loginId.trim() || !authSettings.password.trim()) {
+      return toast.error('ID and Password cannot be empty');
+    }
+    setIsLoading(true);
+    try {
+      const db = getFirestore();
+      await setDoc(doc(db, 'settings', 'adminAuth'), authSettings);
+      toast.success('Admin authentication updated successfully!');
+    } catch (e) {
+      toast.error('Failed to save authentication settings');
     } finally {
       setIsLoading(false);
     }
@@ -320,14 +438,75 @@ const AdminPanel: React.FC = () => {
     toast.success('CSV exported successfully');
   };
 
+  // Prevent hydration mismatch by rendering a safe loading state until mounted
+  if (!isMounted) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="w-12 h-12 border-4 border-red-600 border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <Toaster position="top-center" />
+        <motion.div initial={{opacity: 0, y: 20}} animate={{opacity: 1, y: 0}} className="w-full max-w-md bg-white rounded-2xl shadow-2xl p-8 border-t-4 border-red-600 relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-400 via-red-600 to-red-400"></div>
+          <h2 className="text-3xl font-black text-center text-gray-800 mb-2">Admin Portal</h2>
+          <p className="text-center text-gray-500 mb-8 font-medium">Please sign in to continue</p>
+          <form onSubmit={handleLogin} className="space-y-5">
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-1.5 ml-1">Login ID</label>
+              <input
+                type="text"
+                value={loginForm.id}
+                onChange={(e) => setLoginForm({ ...loginForm, id: e.target.value })}
+                className="w-full px-4 py-3 text-gray-900 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-600 focus:bg-white transition-colors"
+                placeholder="Enter login ID"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-1.5 ml-1">Password</label>
+              <input
+                type="password"
+                value={loginForm.password}
+                onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                className="w-full px-4 py-3 text-gray-900 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-600 focus:bg-white transition-colors"
+                placeholder="Enter password"
+                required
+              />
+            </div>
+            <button type="submit" disabled={isLoading} className="w-full mt-8 py-4 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white text-lg font-black tracking-wider rounded-xl transition-all shadow-lg hover:shadow-red-500/30 disabled:opacity-50">
+              {isLoading ? 'AUTHENTICATING...' : 'SECURE LOGIN ➔'}
+            </button>
+          </form>
+        </motion.div>
+      </div>
+    );
+  }
 
 
   return (
     <div className="bg-gray-50 min-h-screen p-6">
+      <Toaster position="top-center" />
       <div className="max-w-7xl mx-auto">
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold text-gray-800 mb-2">Admin Dashboard</h1>
-          <p className="text-gray-600">Manage prizes, participants, and draw results</p>
+        <div className="mb-8 flex justify-between items-start">
+          <div>
+            <h1 className="text-4xl font-bold text-gray-800 mb-2">Admin Dashboard</h1>
+            <p className="text-gray-600">Manage prizes, participants, and draw results</p>
+          </div>
+          <button 
+            onClick={() => {
+              sessionStorage.removeItem('adminAuth');
+              setIsAuthenticated(false);
+              toast.success('Logged out successfully');
+            }}
+            className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 font-bold rounded-lg hover:bg-gray-100 transition-colors shadow-sm"
+          >
+            Logout ➔
+          </button>
         </div>
 
         <div className="flex gap-2 mb-6 border-b border-gray-200">
@@ -531,6 +710,13 @@ const AdminPanel: React.FC = () => {
               >
                 Export CSV
               </motion.button>
+              <motion.button
+                onClick={handleDeleteAllParticipants}
+                whileHover={{ scale: 1.05 }}
+                className="px-6 py-2 bg-red-600 text-white rounded-lg font-bold hover:bg-red-700 whitespace-nowrap shadow-md"
+              >
+                Delete All
+              </motion.button>
             </div>
 
             <div className="bg-white rounded-lg shadow overflow-x-auto">
@@ -622,6 +808,13 @@ const AdminPanel: React.FC = () => {
               >
                 Export CSV
               </motion.button>
+              <motion.button
+                onClick={handleDeleteAllResults}
+                whileHover={{ scale: 1.05 }}
+                className="px-6 py-2 bg-red-600 text-white rounded-lg font-bold hover:bg-red-700 whitespace-nowrap shadow-md"
+              >
+                Delete All
+              </motion.button>
             </div>
 
             <div className="bg-white rounded-lg shadow overflow-x-auto">
@@ -698,7 +891,8 @@ const AdminPanel: React.FC = () => {
         )}
 
         {activeTab === 'settings' && (
-          <div className="bg-white rounded-lg shadow max-w-3xl">
+          <div className="max-w-3xl space-y-6">
+            <div className="bg-white rounded-lg shadow">
             <div className="p-6 border-b border-gray-200">
               <h2 className="text-xl font-bold text-gray-800">Form Field Settings</h2>
               <p className="text-gray-600 text-sm mt-1">Toggle which fields clients are required to fill in during registration.</p>
@@ -745,6 +939,44 @@ const AdminPanel: React.FC = () => {
                 >
                   Save Settings
                 </motion.button>
+              </div>
+            </div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow border-t-4 border-gray-800">
+              <div className="p-6 border-b border-gray-200">
+                <h2 className="text-xl font-bold text-gray-800">Admin Authentication</h2>
+                <p className="text-gray-600 text-sm mt-1">Update the login ID and password for the admin portal.</p>
+              </div>
+              <div className="p-6 space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Login ID</label>
+                  <input
+                    type="text"
+                    value={authSettings.loginId}
+                    onChange={(e) => setAuthSettings({...authSettings, loginId: e.target.value})}
+                    className="w-full px-4 py-3 text-gray-900 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-600 focus:bg-white transition-colors"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Password</label>
+                  <input
+                    type="text"
+                    value={authSettings.password}
+                    onChange={(e) => setAuthSettings({...authSettings, password: e.target.value})}
+                    className="w-full px-4 py-3 text-gray-900 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-600 focus:bg-white transition-colors"
+                  />
+                </div>
+                <div className="mt-6 pt-6 border-t border-gray-200">
+                  <motion.button
+                    onClick={handleSaveAuthSettings}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    className="w-full px-6 py-4 bg-gray-800 text-white rounded-xl font-bold tracking-wide hover:bg-gray-900 transition-colors shadow-md"
+                  >
+                    Save Login Settings
+                  </motion.button>
+                </div>
               </div>
             </div>
           </div>

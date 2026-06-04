@@ -3,10 +3,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Prize } from '@/types';
-import dynamic from 'next/dynamic';
-
-// @ts-expect-error - react-confetti might lack type definitions
-const Confetti = dynamic(() => import('react-confetti'), { ssr: false });
 
 interface SpinWheelProps {
   prizes: Prize[];
@@ -22,7 +18,6 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
   const [winningPrize, setWinningPrize] = useState<Prize | null>(null);
   const wheelRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [windowDimension, setWindowDimension] = useState({ width: 0, height: 0 });
 
   const SEGMENT_COUNT = prizes.length;
   const SEGMENT_ANGLE = 360 / SEGMENT_COUNT;
@@ -33,16 +28,6 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
       setBlink((prev) => !prev);
     }, 500);
     return () => clearInterval(interval);
-  }, []);
-
-  // 获取窗口大小用于撒花特效
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setWindowDimension({ width: window.innerWidth, height: window.innerHeight });
-      const handleResize = () => setWindowDimension({ width: window.innerWidth, height: window.innerHeight });
-      window.addEventListener('resize', handleResize);
-      return () => window.removeEventListener('resize', handleResize);
-    }
   }, []);
 
   useEffect(() => {
@@ -269,16 +254,6 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
             animate={{ opacity: 1 }}
             className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm px-4"
           >
-            <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
-              <Confetti
-                width={windowDimension.width}
-                height={windowDimension.height}
-                recycle={false}
-                numberOfPieces={800}
-                gravity={0.12}
-                colors={['#FFD700', '#DC143C', '#FFFFFF', '#FFA500', '#FF4500']}
-              />
-            </div>
             <motion.div
               initial={{ scale: 0.5, y: 50 }}
               animate={{ scale: 1, y: 0 }}
