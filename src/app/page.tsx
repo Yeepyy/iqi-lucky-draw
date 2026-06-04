@@ -293,7 +293,7 @@ function AgentPortal() {
             <div className="p-5 bg-green-500/20 border border-green-500/50 rounded-xl backdrop-blur-sm">
               <p className="text-green-300 font-bold mb-2">Your link is ready! ✓</p>
               <p className="text-sm text-green-100/80 mb-4 font-light">
-                Send this link to your clients. They won't need to fill in the Agent Name manually.
+                Send this link to your clients. They won&apos;t need to fill in the Agent Name manually.
               </p>
               <div className="flex items-center gap-2">
                 <input
