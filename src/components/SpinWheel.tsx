@@ -16,11 +16,26 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
   const [blink, setBlink] = useState(false);
   const [spinFinished, setSpinFinished] = useState(false);
   const [winningPrize, setWinningPrize] = useState<Prize | null>(null);
+  const [prizeImages, setPrizeImages] = useState<Record<string, HTMLImageElement>>({});
   const wheelRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const SEGMENT_COUNT = prizes.length;
   const SEGMENT_ANGLE = 360 / SEGMENT_COUNT;
+
+  const drawCoveredImage = (
+    ctx: CanvasRenderingContext2D,
+    image: HTMLImageElement,
+    x: number,
+    y: number,
+    width: number,
+    height: number
+  ) => {
+    const scale = Math.max(width / image.naturalWidth, height / image.naturalHeight);
+    const drawWidth = image.naturalWidth * scale;
+    const drawHeight = image.naturalHeight * scale;
+    ctx.drawImage(image, x + (width - drawWidth) / 2, y + (height - drawHeight) / 2, drawWidth, drawHeight);
+  };
 
   // 跑马灯闪烁定时器 (Blinking effect timer)
   useEffect(() => {
@@ -29,6 +44,29 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
     }, 500);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const images: Record<string, HTMLImageElement> = {};
+    const imagePrizes = prizes.filter((prize) => prize.imageUrl);
+
+    Promise.all(imagePrizes.map((prize) => new Promise<void>((resolve) => {
+      const image = new Image();
+      image.crossOrigin = 'anonymous';
+      image.onload = () => {
+        images[prize.id] = image;
+        resolve();
+      };
+      image.onerror = () => resolve();
+      image.src = prize.imageUrl!;
+    }))).then(() => {
+      if (!cancelled) setPrizeImages(images);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [prizes]);
 
   useEffect(() => {
     if (!canvasRef.current || prizes.length === 0) return;
@@ -40,6 +78,7 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
     const radius = canvas.width / 2;
     const centerX = radius;
     const centerY = radius;
+    const counterRotation = -((rotation % 360) * Math.PI) / 180;
 
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -75,19 +114,60 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
       ctx.lineWidth = 4;
       ctx.stroke();
 
+      const middleAngle = startAngle + (endAngle - startAngle) / 2;
+      const prizeImage = prizeImages[prize.id];
+      if (prizeImage) {
+        const imageCenterX = centerX + Math.cos(middleAngle) * radius * 0.58;
+        const imageCenterY = centerY + Math.sin(middleAngle) * radius * 0.58;
+        const imageSize = radius * (SEGMENT_COUNT <= 4 ? 1.75 : SEGMENT_COUNT <= 8 ? 1.35 : 1.05);
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(centerX, centerY);
+        ctx.arc(centerX, centerY, radius - 10, startAngle, endAngle);
+        ctx.closePath();
+        ctx.clip();
+
+        ctx.translate(imageCenterX, imageCenterY);
+        ctx.rotate(counterRotation);
+        drawCoveredImage(
+          ctx,
+          prizeImage,
+          -imageSize * 0.7,
+          -imageSize * 0.7,
+          imageSize * 1.4,
+          imageSize * 1.4
+        );
+
+        const shade = ctx.createRadialGradient(0, 0, 10, 0, 0, imageSize / 1.6);
+        shade.addColorStop(0, 'rgba(0,0,0,0)');
+        shade.addColorStop(1, 'rgba(0,0,0,0.34)');
+        ctx.fillStyle = shade;
+        ctx.fillRect(-imageSize, -imageSize, imageSize * 2, imageSize * 2);
+        ctx.restore();
+      }
+
+      let text = prize.name;
+      if (text.length > 20) text = text.substring(0, 18) + '...';
+      const textRadius = SEGMENT_COUNT <= 4 ? radius * 0.7 : radius * 0.67;
+      const textX = centerX + Math.cos(middleAngle) * textRadius;
+      const textY = centerY + Math.sin(middleAngle) * textRadius;
+
       ctx.save();
-      ctx.translate(centerX, centerY);
-      ctx.rotate(startAngle + (endAngle - startAngle) / 2);
-      ctx.textAlign = 'right';
+      ctx.translate(textX, textY);
+      ctx.rotate(counterRotation);
+      ctx.font = `900 ${SEGMENT_COUNT <= 4 ? 18 : 14}px sans-serif`;
+      ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
+      const textWidth = ctx.measureText(text).width;
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
+      ctx.beginPath();
+      ctx.roundRect(-textWidth / 2 - 9, -15, textWidth + 18, 30, 9);
+      ctx.fill();
       ctx.fillStyle = '#FFFFFF';
       ctx.shadowColor = 'rgba(0,0,0,0.9)';
-      ctx.shadowBlur = 6;
-      ctx.font = 'bold 16px sans-serif';
-      
-      let text = prize.name;
-      if (text.length > 16) text = text.substring(0, 14) + '...';
-      ctx.fillText(text, radius - 45, 0);
+      ctx.shadowBlur = 5;
+      ctx.fillText(text, 0, 0);
       ctx.restore();
     });
 
@@ -139,7 +219,7 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
     ctx.shadowBlur = 10;
     ctx.fill();
     ctx.shadowBlur = 0; // Reset
-  }, [prizes, SEGMENT_ANGLE, blink]);
+  }, [prizes, prizeImages, SEGMENT_ANGLE, blink, rotation]);
 
   const handleSpin = () => {
     if (isSpinning || prizes.length === 0) return;
@@ -263,6 +343,14 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
               <h2 className="text-4xl font-black text-red-600 mb-4 drop-shadow-sm">🎉 WINNER!</h2>
               <p className="text-gray-600 font-semibold mb-2">Congratulations, you have won</p>
               <div className="bg-red-50 py-4 px-2 rounded-xl border border-red-100 mb-8 shadow-inner">
+                {winningPrize.imageUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={winningPrize.imageUrl}
+                    alt={winningPrize.name}
+                    className="mx-auto mb-4 h-56 w-full rounded-2xl border-4 border-white bg-white object-contain p-2 shadow-lg"
+                  />
+                )}
                 <p className="text-2xl font-bold text-gray-900">{winningPrize.name}</p>
               </div>
               

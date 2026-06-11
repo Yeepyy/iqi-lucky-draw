@@ -12,9 +12,10 @@ import {
   checkParticipantExists,
   getAllPrizes,
   savDrawResult,
+  getSetting,
 } from '@/lib/database';
-import { getFirestore, doc, getDoc } from 'firebase/firestore';
 import { Prize, Participant, DrawResult } from '@/types';
+import { FormSettings } from '@/components/UserForm';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,7 +28,7 @@ function LuckyDrawClient({ agentName }: { agentName: string }) {
   const [participant, setParticipant] = useState<Participant | null>(null);
   const [drawResult, setDrawResult] = useState<DrawResult | null>(null);
   const [isSpinning, setIsSpinning] = useState(false);
-  const [formSettings, setFormSettings] = useState<any>(null);
+  const [formSettings, setFormSettings] = useState<FormSettings | null>(null);
 
   useEffect(() => {
     loadInitialData();
@@ -38,13 +39,7 @@ function LuckyDrawClient({ agentName }: { agentName: string }) {
       const prizeData = await getAllPrizes();
       setPrizes(prizeData);
 
-      const db = getFirestore();
-      const settingsDoc = await getDoc(doc(db, 'settings', 'formFields'));
-      if (settingsDoc.exists()) {
-        setFormSettings(settingsDoc.data());
-      } else {
-        setFormSettings({ showIC: true, showPhone: true, showEmail: true, showProject: true, showUnit: true, showAgent: true });
-      }
+      setFormSettings(await getSetting('formFields', { showIC: true, showPhone: true, showEmail: true, showProject: true, showUnit: true, showAgent: true }));
     } catch (error) {
       console.error('Error loading initial data:', error);
       setFormSettings({ showIC: true, showPhone: true, showEmail: true, showProject: true, showUnit: true, showAgent: true });

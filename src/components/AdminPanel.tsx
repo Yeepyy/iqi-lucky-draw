@@ -10,10 +10,18 @@ import {
   addPrize,
   updatePrize,
   deletePrize,
+  updateParticipant,
+  deleteParticipant,
+  deleteAllParticipants,
+  deleteDrawResult,
+  deleteAllDrawResults,
+  getSetting,
+  saveSetting,
 } from '@/lib/database';
-import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { Prize, Participant, DrawResult } from '@/types';
 import AcknowledgementLetter from '@/components/AcknowledgementLetter';
+import { deletePrizeImage, uploadPrizeImage } from '@/lib/prizeImages';
+import { supabase } from '@/config/supabase';
 
 const AdminPanel: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'prizes' | 'participants' | 'results' | 'settings'>('prizes');
@@ -24,11 +32,15 @@ const AdminPanel: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showPrizeForm, setShowPrizeForm] = useState(false);
   const [editingPrize, setEditingPrize] = useState<Prize | null>(null);
+  const [prizeImageFile, setPrizeImageFile] = useState<File | null>(null);
+  const [prizeImagePreview, setPrizeImagePreview] = useState('');
   const [prizeForm, setPrizeForm] = useState({
     name: '',
     probability: 10,
     maxWinners: 5,
     description: '',
+    imageUrl: '',
+    imagePath: '',
   });
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'ascending' | 'descending' } | null>(null);
   const [selectedResult, setSelectedResult] = useState<DrawResult | null>(null);
@@ -52,8 +64,7 @@ const AdminPanel: React.FC = () => {
   });
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
-  const [loginForm, setLoginForm] = useState({ id: '', password: '' });
-  const [authSettings, setAuthSettings] = useState({ loginId: 'admin', password: 'coreteam123' });
+  const [loginForm, setLoginForm] = useState({ email: '', password: '' });
 
   // === DERIVED STATE (Moved here to prevent 'use-before-define' build errors) ===
   const requestSort = (key: string) => {
@@ -107,9 +118,15 @@ const AdminPanel: React.FC = () => {
   // ==============================================================================
 
   useEffect(() => {
-    const stored = sessionStorage.getItem('adminAuth');
-    if (stored === 'true') setIsAuthenticated(true);
-    setIsMounted(true);
+    supabase.auth.getSession().then(async ({ data }) => {
+      const { data: isAdmin } = data.session ? await supabase.rpc('is_admin') : { data: false };
+      setIsAuthenticated(Boolean(isAdmin));
+      setIsMounted(true);
+    });
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session) setIsAuthenticated(false);
+    });
+    return () => data.subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -118,22 +135,23 @@ const AdminPanel: React.FC = () => {
     }
   }, [isAuthenticated, isMounted]);
 
+  useEffect(() => {
+    return () => {
+      if (prizeImagePreview.startsWith('blob:')) URL.revokeObjectURL(prizeImagePreview);
+    };
+  }, [prizeImagePreview]);
+
   const loadData = async () => {
     setIsLoading(true);
     try {
       // Add a 10-second timeout to prevent infinite loading
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Database connection timeout. Please check your Firebase config.')), 10000)
+        setTimeout(() => reject(new Error('Database connection timeout. Please check your Supabase config.')), 10000)
       );
 
       const fetchSettings = async () => {
         try {
-          const db = getFirestore();
-          const d = await getDoc(doc(db, 'settings', 'formFields'));
-          if (d.exists()) setFormSettings(d.data() as any);
-
-          const authD = await getDoc(doc(db, 'settings', 'adminAuth'));
-          if (authD.exists()) setAuthSettings(authD.data() as any);
+          setFormSettings(await getSetting('formFields', formSettings));
         } catch (e) {}
       };
 
@@ -169,11 +187,28 @@ const AdminPanel: React.FC = () => {
 
     setIsLoading(true);
     try {
+      let imageData = {
+        imageUrl: prizeForm.imageUrl,
+        imagePath: prizeForm.imagePath,
+      };
+
+      if (prizeImageFile) {
+        const uploadedImage = await uploadPrizeImage(prizeImageFile);
+        imageData = {
+          imageUrl: uploadedImage.imageUrl,
+          imagePath: uploadedImage.imagePath,
+        };
+      }
+
+      const data = { ...prizeForm, ...imageData };
       if (editingPrize) {
-        await updatePrize(editingPrize.id, prizeForm);
+        await updatePrize(editingPrize.id, data);
+        if (prizeImageFile && editingPrize.imagePath !== imageData.imagePath) {
+          await deletePrizeImage(editingPrize.imagePath);
+        }
         toast.success('Prize updated successfully');
       } else {
-        await addPrize(prizeForm);
+        await addPrize(data);
         toast.success('Prize added successfully');
       }
       await loadData();
@@ -181,7 +216,7 @@ const AdminPanel: React.FC = () => {
       setShowPrizeForm(false);
     } catch (error) {
       console.error('Error saving prize:', error);
-      toast.error('Failed to save prize');
+      toast.error(error instanceof Error ? error.message : 'Failed to save prize');
     } finally {
       setIsLoading(false);
     }
@@ -210,7 +245,11 @@ const AdminPanel: React.FC = () => {
       probability: prize.probability,
       maxWinners: prize.maxWinners,
       description: prize.description || '',
+      imageUrl: prize.imageUrl || '',
+      imagePath: prize.imagePath || '',
     });
+    setPrizeImageFile(null);
+    setPrizeImagePreview(prize.imageUrl || '');
     setShowPrizeForm(true);
   };
 
@@ -220,16 +259,38 @@ const AdminPanel: React.FC = () => {
       probability: 10,
       maxWinners: 5,
       description: '',
+      imageUrl: '',
+      imagePath: '',
     });
+    setPrizeImageFile(null);
+    setPrizeImagePreview('');
     setEditingPrize(null);
+  };
+
+  const handlePrizeImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/') || file.type === 'image/svg+xml') {
+      toast.error('Please choose a JPG, PNG, or WebP image');
+      event.target.value = '';
+      return;
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error('The original image must be smaller than 15 MB');
+      event.target.value = '';
+      return;
+    }
+
+    setPrizeImageFile(file);
+    setPrizeImagePreview(URL.createObjectURL(file));
   };
 
   const handleDeleteParticipant = async (id: string) => {
     if (!confirm('Are you sure you want to delete this participant? This cannot be undone.')) return;
     setIsLoading(true);
     try {
-      const db = getFirestore();
-      await deleteDoc(doc(db, 'participants', id));
+      await deleteParticipant(id);
       toast.success('Participant deleted successfully');
       await loadData();
     } catch (error) {
@@ -258,8 +319,7 @@ const AdminPanel: React.FC = () => {
     if (!editingParticipant) return;
     setIsLoading(true);
     try {
-      const db = getFirestore();
-      await updateDoc(doc(db, 'participants', editingParticipant.id), participantForm);
+      await updateParticipant(editingParticipant.id, participantForm);
       toast.success('Participant updated successfully');
       setEditingParticipant(null);
       await loadData();
@@ -275,19 +335,7 @@ const AdminPanel: React.FC = () => {
     if (!confirm('Are you sure you want to delete this draw result?')) return;
     setIsLoading(true);
     try {
-      const db = getFirestore();
-      const resultToDelete = drawResults.find(r => r.id === id);
-      
-      await deleteDoc(doc(db, 'drawResults', id));
-
-      if (resultToDelete && resultToDelete.prizeId) {
-        const prizeRef = doc(db, 'prizes', resultToDelete.prizeId);
-        const prizeSnap = await getDoc(prizeRef);
-        if (prizeSnap.exists()) {
-          const current = prizeSnap.data().currentWinners || 0;
-          await updateDoc(prizeRef, { currentWinners: Math.max(0, current - 1) });
-        }
-      }
+      await deleteDrawResult(id);
 
       toast.success('Draw result deleted successfully');
       await loadData();
@@ -306,8 +354,7 @@ const AdminPanel: React.FC = () => {
     
     setIsLoading(true);
     try {
-      const db = getFirestore();
-      await Promise.all(participants.map(p => deleteDoc(doc(db, 'participants', p.id))));
+      await deleteAllParticipants();
       toast.success('All participants deleted successfully');
       await loadData();
     } catch (error) {
@@ -325,11 +372,7 @@ const AdminPanel: React.FC = () => {
 
     setIsLoading(true);
     try {
-      const db = getFirestore();
-      await Promise.all(drawResults.map(r => deleteDoc(doc(db, 'drawResults', r.id))));
-      
-      // 重置所有奖品的 currentWinners 为 0
-      await Promise.all(prizes.map(p => updateDoc(doc(db, 'prizes', p.id), { currentWinners: 0 })));
+      await deleteAllDrawResults();
       
       toast.success('All draw results deleted successfully');
       await loadData();
@@ -345,46 +388,18 @@ const AdminPanel: React.FC = () => {
     e.preventDefault();
     setIsLoading(true);
     try {
-      const db = getFirestore();
-      const authDoc = await getDoc(doc(db, 'settings', 'adminAuth'));
-      
-      let currentId = 'admin';
-      let currentPass = 'coreteam123';
-      
-      if (authDoc.exists()) {
-        const data = authDoc.data();
-        currentId = data.loginId;
-        currentPass = data.password;
-      } else {
-        await setDoc(doc(db, 'settings', 'adminAuth'), { loginId: currentId, password: currentPass });
+      const { error } = await supabase.auth.signInWithPassword(loginForm);
+      if (error) throw error;
+      const { data: isAdmin, error: adminError } = await supabase.rpc('is_admin');
+      if (adminError || !isAdmin) {
+        await supabase.auth.signOut();
+        throw new Error('This account is not authorized for the admin portal.');
       }
-
-      if (loginForm.id === currentId && loginForm.password === currentPass) {
-        setIsAuthenticated(true);
-        sessionStorage.setItem('adminAuth', 'true');
-        toast.success('Login successful');
-      } else {
-        toast.error('Invalid ID or Password');
-      }
+      setIsAuthenticated(true);
+      toast.success('Login successful');
     } catch (error) {
       console.error('Login error:', error);
-      toast.error('Failed to verify credentials');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleSaveAuthSettings = async () => {
-    if (!authSettings.loginId.trim() || !authSettings.password.trim()) {
-      return toast.error('ID and Password cannot be empty');
-    }
-    setIsLoading(true);
-    try {
-      const db = getFirestore();
-      await setDoc(doc(db, 'settings', 'adminAuth'), authSettings);
-      toast.success('Admin authentication updated successfully!');
-    } catch (e) {
-      toast.error('Failed to save authentication settings');
+      toast.error(error instanceof Error ? error.message : 'Failed to verify credentials');
     } finally {
       setIsLoading(false);
     }
@@ -457,13 +472,13 @@ const AdminPanel: React.FC = () => {
           <p className="text-center text-gray-500 mb-8 font-medium">Please sign in to continue</p>
           <form onSubmit={handleLogin} className="space-y-5">
             <div>
-              <label className="block text-sm font-bold text-gray-700 mb-1.5 ml-1">Login ID</label>
+              <label className="block text-sm font-bold text-gray-700 mb-1.5 ml-1">Email</label>
               <input
-                type="text"
-                value={loginForm.id}
-                onChange={(e) => setLoginForm({ ...loginForm, id: e.target.value })}
+                type="email"
+                value={loginForm.email}
+                onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
                 className="w-full px-4 py-3 text-gray-900 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-600 focus:bg-white transition-colors"
-                placeholder="Enter login ID"
+                placeholder="Enter admin email"
                 required
               />
             </div>
@@ -498,9 +513,8 @@ const AdminPanel: React.FC = () => {
             <p className="text-gray-600">Manage prizes, participants, and draw results</p>
           </div>
           <button 
-            onClick={() => {
-              sessionStorage.removeItem('adminAuth');
-              setIsAuthenticated(false);
+            onClick={async () => {
+              await supabase.auth.signOut();
               toast.success('Logged out successfully');
             }}
             className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 font-bold rounded-lg hover:bg-gray-100 transition-colors shadow-sm"
@@ -603,6 +617,38 @@ const AdminPanel: React.FC = () => {
                           placeholder="Prize details"
                         />
                       </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Prize Photo
+                        </label>
+                        <div className="flex flex-col sm:flex-row gap-4 rounded-lg border border-gray-300 bg-gray-50 p-4">
+                          <div className="h-28 w-28 shrink-0 overflow-hidden rounded-lg border border-gray-200 bg-white">
+                            {prizeImagePreview ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={prizeImagePreview}
+                                alt="Prize preview"
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <div className="flex h-full items-center justify-center px-3 text-center text-xs text-gray-400">
+                                No photo selected
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex flex-1 flex-col justify-center">
+                            <input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp"
+                              onChange={handlePrizeImageChange}
+                              className="block w-full text-sm text-gray-700 file:mr-4 file:rounded-lg file:border-0 file:bg-red-600 file:px-4 file:py-2 file:font-semibold file:text-white hover:file:bg-red-700"
+                            />
+                            <p className="mt-2 text-xs text-gray-500">
+                              JPG, PNG, or WebP up to 15 MB. Photos are automatically compressed to WebP before uploading.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                     <div className="flex gap-2">
                       <button
@@ -632,6 +678,9 @@ const AdminPanel: React.FC = () => {
               <table className="w-full">
                 <thead className="bg-gray-100 border-b border-gray-200">
                   <tr>
+                    <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                      Photo
+                    </th>
                     <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700 cursor-pointer" onClick={() => requestSort('name')}>
                       Prize Name{getSortIndicator('name')}
                     </th>
@@ -657,6 +706,22 @@ const AdminPanel: React.FC = () => {
                       animate={{ opacity: 1 }}
                       className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}
                     >
+                      <td className="px-6 py-4">
+                        <div className="h-14 w-14 overflow-hidden rounded-lg border border-gray-200 bg-gray-100">
+                          {prize.imageUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={prize.imageUrl}
+                              alt={prize.name}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-full items-center justify-center text-[10px] text-gray-400">
+                              No photo
+                            </div>
+                          )}
+                        </div>
+                      </td>
                       <td className="px-6 py-4 text-sm text-gray-800">{prize.name}</td>
                       <td className="px-6 py-4 text-sm text-gray-800">{prize.probability}%</td>
                       <td className="px-6 py-4 text-sm text-gray-800">{prize.maxWinners}</td>
@@ -924,8 +989,7 @@ const AdminPanel: React.FC = () => {
                   onClick={async () => {
                     setIsLoading(true);
                     try {
-                      const db = getFirestore();
-                      await setDoc(doc(db, 'settings', 'formFields'), formSettings);
+                      await saveSetting('formFields', formSettings);
                       toast.success('Settings saved successfully!');
                     } catch (e) {
                       toast.error('Failed to save settings');
@@ -943,41 +1007,8 @@ const AdminPanel: React.FC = () => {
             </div>
             </div>
 
-            <div className="bg-white rounded-lg shadow border-t-4 border-gray-800">
-              <div className="p-6 border-b border-gray-200">
-                <h2 className="text-xl font-bold text-gray-800">Admin Authentication</h2>
-                <p className="text-gray-600 text-sm mt-1">Update the login ID and password for the admin portal.</p>
-              </div>
-              <div className="p-6 space-y-4">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Login ID</label>
-                  <input
-                    type="text"
-                    value={authSettings.loginId}
-                    onChange={(e) => setAuthSettings({...authSettings, loginId: e.target.value})}
-                    className="w-full px-4 py-3 text-gray-900 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-600 focus:bg-white transition-colors"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Password</label>
-                  <input
-                    type="text"
-                    value={authSettings.password}
-                    onChange={(e) => setAuthSettings({...authSettings, password: e.target.value})}
-                    className="w-full px-4 py-3 text-gray-900 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-600 focus:bg-white transition-colors"
-                  />
-                </div>
-                <div className="mt-6 pt-6 border-t border-gray-200">
-                  <motion.button
-                    onClick={handleSaveAuthSettings}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    className="w-full px-6 py-4 bg-gray-800 text-white rounded-xl font-bold tracking-wide hover:bg-gray-900 transition-colors shadow-md"
-                  >
-                    Save Login Settings
-                  </motion.button>
-                </div>
-              </div>
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-6 text-sm text-blue-900">
+              Admin accounts and passwords are managed securely in Supabase Authentication.
             </div>
           </div>
         )}

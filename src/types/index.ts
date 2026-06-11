@@ -5,6 +5,8 @@ export interface Prize {
   maxWinners: number;
   currentWinners: number;
   description?: string;
+  imageUrl?: string;
+  imagePath?: string;
 }
 
 export interface Participant {
@@ -28,6 +30,7 @@ export interface DrawResult {
   drawDate: Date;
   referenceNumber: string;
   acknowledgementSigned: boolean;
+  signature?: string;
   participantDetails?: Participant;
 }
 
