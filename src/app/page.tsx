@@ -9,13 +9,14 @@ import SpinWheel from '@/components/SpinWheel';
 import AcknowledgementLetter from '@/components/AcknowledgementLetter';
 import {
   addParticipant,
-  checkParticipantExists,
+  checkParticipantDuplicates,
   getAllPrizes,
   savDrawResult,
   getSetting,
 } from '@/lib/database';
 import { Prize, Participant, DrawResult } from '@/types';
 import { FormSettings } from '@/components/UserForm';
+import { DEFAULT_WHEEL_COLORS, normalizeWheelColors } from '@/lib/wheelColors';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +30,7 @@ function LuckyDrawClient({ agentName }: { agentName: string }) {
   const [drawResult, setDrawResult] = useState<DrawResult | null>(null);
   const [isSpinning, setIsSpinning] = useState(false);
   const [formSettings, setFormSettings] = useState<FormSettings | null>(null);
+  const [wheelColors, setWheelColors] = useState(DEFAULT_WHEEL_COLORS);
 
   useEffect(() => {
     loadInitialData();
@@ -39,7 +41,12 @@ function LuckyDrawClient({ agentName }: { agentName: string }) {
       const prizeData = await getAllPrizes();
       setPrizes(prizeData);
 
-      setFormSettings(await getSetting('formFields', { showIC: true, showPhone: true, showEmail: true, showProject: true, showUnit: true, showAgent: true }));
+      const [fields, colors] = await Promise.all([
+        getSetting('formFields', { showIC: true, showPhone: true, showEmail: true, showProject: true, showUnit: true, showAgent: true }),
+        getSetting('wheelColors', DEFAULT_WHEEL_COLORS),
+      ]);
+      setFormSettings(fields);
+      setWheelColors(normalizeWheelColors(colors));
     } catch (error) {
       console.error('Error loading initial data:', error);
       setFormSettings({ showIC: true, showPhone: true, showEmail: true, showProject: true, showUnit: true, showAgent: true });
@@ -49,12 +56,14 @@ function LuckyDrawClient({ agentName }: { agentName: string }) {
   const handleFormSubmit = async (formData: any) => {
     setIsLoading(true);
     try {
-      const checkIc = formData.icPassport?.trim() || `N/A-${Date.now()}-${Math.random()}`;
-      const checkPhone = formData.phoneNumber?.trim() || `N/A-${Date.now()}-${Math.random()}`;
-      const exists = await checkParticipantExists(checkIc, checkPhone);
+      const duplicateFields = await checkParticipantDuplicates(
+        formData.icPassport?.trim() || '',
+        formData.email?.trim() || '',
+        formData.phoneNumber?.trim() || '',
+      );
 
-      if (exists) {
-        toast.error('You have already participated in this lucky draw');
+      if (duplicateFields.length) {
+        toast.error(`${duplicateFields.join(', ')} already registered. Please contact your Agent.`);
         setIsLoading(false);
         return;
       }
@@ -169,6 +178,7 @@ function LuckyDrawClient({ agentName }: { agentName: string }) {
                   onSpinStart={() => setIsSpinning(true)}
                   onSpinComplete={handleSpinComplete}
                   isSpinning={isSpinning}
+                  colors={wheelColors}
                 />
 
                 <div className="text-center mt-12 pb-4">
@@ -190,6 +200,7 @@ function LuckyDrawClient({ agentName }: { agentName: string }) {
                   drawResult={drawResult}
                   participant={participant}
                   prizeName={drawResult.prizeName}
+                  prizeImageUrl={prizes.find((prize) => prize.id === drawResult.prizeId)?.imageUrl}
                   onClose={handleReset}
                 />
               </div>

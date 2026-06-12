@@ -3,25 +3,79 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Prize } from '@/types';
+import { DEFAULT_WHEEL_COLORS, normalizeWheelColors } from '@/lib/wheelColors';
 
 interface SpinWheelProps {
   prizes: Prize[];
   onSpinStart: () => void;
   onSpinComplete: (prize: Prize) => void;
   isSpinning: boolean;
+  colors?: string[];
 }
 
-const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComplete, isSpinning }) => {
+const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComplete, isSpinning, colors = DEFAULT_WHEEL_COLORS }) => {
   const [rotation, setRotation] = useState(0);
   const [blink, setBlink] = useState(false);
   const [spinFinished, setSpinFinished] = useState(false);
   const [winningPrize, setWinningPrize] = useState<Prize | null>(null);
+  const [activeSegmentIndex, setActiveSegmentIndex] = useState(0);
+  const [pointerKick, setPointerKick] = useState(0);
   const [prizeImages, setPrizeImages] = useState<Record<string, HTMLImageElement>>({});
   const wheelRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const spinSoundTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const spinSoundStartedAtRef = useRef(0);
+  const lastPointerSegmentRef = useRef(0);
 
   const SEGMENT_COUNT = prizes.length;
   const SEGMENT_ANGLE = 360 / SEGMENT_COUNT;
+  const SPIN_DURATION = 5;
+  const wheelColors = normalizeWheelColors(colors);
+
+  const getAudioContext = () => {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new AudioContext();
+    }
+    return audioContextRef.current;
+  };
+
+  const playTone = (frequency: number, duration: number, volume: number) => {
+    const audioContext = getAudioContext();
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+    gain.gain.setValueAtTime(volume, audioContext.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration);
+    oscillator.connect(gain);
+    gain.connect(audioContext.destination);
+    oscillator.start();
+    oscillator.stop(audioContext.currentTime + duration);
+  };
+
+  const startSpinSound = () => {
+    if (spinSoundTimerRef.current) clearTimeout(spinSoundTimerRef.current);
+    spinSoundStartedAtRef.current = performance.now();
+
+    const tick = () => {
+      const elapsed = (performance.now() - spinSoundStartedAtRef.current) / 1000;
+      if (elapsed >= SPIN_DURATION) return;
+
+      playTone(520 + Math.random() * 80, 0.045, 0.035);
+      const progress = elapsed / SPIN_DURATION;
+      const nextTickDelay = 45 + Math.pow(progress, 2.6) * 300;
+      spinSoundTimerRef.current = setTimeout(tick, nextTickDelay);
+    };
+
+    tick();
+  };
+
+  const playFinishSound = () => {
+    playTone(659, 0.22, 0.08);
+    setTimeout(() => playTone(880, 0.32, 0.1), 140);
+  };
 
   const drawContainedImage = (
     ctx: CanvasRenderingContext2D,
@@ -60,7 +114,11 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
     const interval = setInterval(() => {
       setBlink((prev) => !prev);
     }, 500);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (spinSoundTimerRef.current) clearTimeout(spinSoundTimerRef.current);
+      audioContextRef.current?.close();
+    };
   }, []);
 
   useEffect(() => {
@@ -108,18 +166,12 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
     goldGradient.addColorStop(0.75, '#FBF5B7');
     goldGradient.addColorStop(1, '#AA771C');
 
-    // Premium Alternating Colors (Classic Casino Red & Black)
-    const colors = ['#7A0000', '#111111'];
-
     // Draw wheel segments
     prizes.forEach((prize, index) => {
       const startAngle = (index * SEGMENT_ANGLE * Math.PI) / 180;
       const endAngle = ((index + 1) * SEGMENT_ANGLE * Math.PI) / 180;
 
-      let segmentColor = colors[index % colors.length];
-      if (index === prizes.length - 1 && prizes.length % 2 !== 0) {
-        segmentColor = '#3A003A'; // Deep purple fallback for odd lengths
-      }
+      const segmentColor = wheelColors[index % wheelColors.length];
 
       ctx.beginPath();
       ctx.moveTo(centerX, centerY);
@@ -127,8 +179,8 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
       ctx.closePath();
       ctx.fillStyle = segmentColor;
       ctx.fill();
-      ctx.strokeStyle = goldGradient;
-      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(255,255,255,0.82)';
+      ctx.lineWidth = 3;
       ctx.stroke();
 
       const middleAngle = startAngle + (endAngle - startAngle) / 2;
@@ -180,7 +232,7 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
       ctx.textBaseline = 'middle';
       const textWidth = ctx.measureText(text).width;
       
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
+      ctx.fillStyle = 'rgba(30, 41, 59, 0.68)';
       ctx.beginPath();
       ctx.roundRect(-textWidth / 2 - 9, -textRadius - 15, textWidth + 18, 30, 9);
       ctx.fill();
@@ -195,8 +247,8 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
     // Draw Thick Golden Outer Rim
     ctx.beginPath();
     ctx.arc(centerX, centerY, radius - 7, 0, 2 * Math.PI);
-    ctx.strokeStyle = goldGradient;
-    ctx.lineWidth = 14;
+    ctx.strokeStyle = '#F8E7B0';
+    ctx.lineWidth = 13;
     ctx.stroke();
 
     // Inner Rim Highlight
@@ -215,9 +267,9 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
       // 交替闪烁逻辑
       const isLit = index % 2 === (blink ? 0 : 1);
       
-      ctx.fillStyle = isLit ? '#FFFFFF' : '#888888';
-      ctx.shadowColor = isLit ? '#FFEA00' : 'rgba(0,0,0,0.5)';
-      ctx.shadowBlur = isLit ? 15 : 2;
+      ctx.fillStyle = isLit ? '#FFFDF5' : '#D8CFAF';
+      ctx.shadowColor = isLit ? '#FFF1B8' : 'rgba(0,0,0,0.18)';
+      ctx.shadowBlur = isLit ? 10 : 1;
     ctx.fill();
       
       ctx.shadowBlur = 0; // Reset shadow for stroke
@@ -240,17 +292,31 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
     ctx.shadowBlur = 10;
     ctx.fill();
     ctx.shadowBlur = 0; // Reset
-  }, [prizes, prizeImages, SEGMENT_ANGLE, blink, SEGMENT_COUNT]);
+  }, [prizes, prizeImages, SEGMENT_ANGLE, blink, SEGMENT_COUNT, wheelColors]);
 
   const handleSpin = () => {
     if (isSpinning || prizes.length === 0) return;
     onSpinStart();
+    startSpinSound();
 
     const spins = 5 + Math.random() * 5;
     const randomAngle = Math.random() * 360;
     const totalRotation = spins * 360 + randomAngle;
 
     setRotation((prev) => prev + totalRotation);
+  };
+
+  const handleWheelUpdate = (currentRotation: number) => {
+    if (!isSpinning || SEGMENT_COUNT === 0 || !Number.isFinite(currentRotation)) return;
+
+    const pointerAngle = (270 - (currentRotation % 360) + 360) % 360;
+    const segmentIndex = Math.floor(pointerAngle / SEGMENT_ANGLE) % SEGMENT_COUNT;
+
+    if (segmentIndex !== lastPointerSegmentRef.current) {
+      lastPointerSegmentRef.current = segmentIndex;
+      setActiveSegmentIndex(segmentIndex);
+      setPointerKick((value) => value + 1);
+    }
   };
 
   const handleAnimationComplete = () => {
@@ -264,7 +330,10 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
     const winner = prizes[segmentIndex];
 
     setWinningPrize(winner);
+    setActiveSegmentIndex(segmentIndex);
     setSpinFinished(true);
+    if (spinSoundTimerRef.current) clearTimeout(spinSoundTimerRef.current);
+    playFinishSound();
   };
 
   const handleNext = () => {
@@ -276,36 +345,17 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
   return (
     <div className="flex flex-col items-center justify-center gap-6 py-8">
       <div className="relative flex items-center justify-center mt-4">
-        
-        {/* 左上侧长箭头 (Top Left Long Arrow) */}
-        <motion.div
-          animate={{ x: [0, 15, 0], y: [0, 15, 0] }}
-          transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
-          className="absolute -top-16 -left-16 z-10 flex flex-col items-center opacity-90 -rotate-45"
-        >
-          <div className="w-2 h-32 bg-gradient-to-b from-transparent via-yellow-400 to-yellow-600 drop-shadow-[0_0_10px_rgba(255,215,0,0.8)]" />
-          <div className="w-0 h-0 border-l-[14px] border-r-[14px] border-t-[30px] border-l-transparent border-r-transparent border-t-yellow-500 drop-shadow-[0_0_15px_rgba(255,215,0,1)] -mt-1" />
-        </motion.div>
-
-        {/* 右上侧长箭头 (Top Right Long Arrow) */}
-        <motion.div
-          animate={{ x: [0, -15, 0], y: [0, 15, 0] }}
-          transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut", delay: 0.5 }}
-          className="absolute -top-16 -right-16 z-10 flex flex-col items-center opacity-90 rotate-45"
-        >
-          <div className="w-2 h-32 bg-gradient-to-b from-transparent via-yellow-400 to-yellow-600 drop-shadow-[0_0_10px_rgba(255,215,0,0.8)]" />
-          <div className="w-0 h-0 border-l-[14px] border-r-[14px] border-t-[30px] border-l-transparent border-r-transparent border-t-yellow-500 drop-shadow-[0_0_15px_rgba(255,215,0,1)] -mt-1" />
-        </motion.div>
 
         <motion.div
           ref={wheelRef}
           animate={{ rotate: rotation }}
           transition={{
-            duration: 5,
-            ease: 'easeInOut',
+            duration: SPIN_DURATION,
+            ease: [0.12, 0.72, 0.18, 1],
           }}
+          onUpdate={(latest) => handleWheelUpdate(Number(latest.rotate))}
           onAnimationComplete={handleAnimationComplete}
-          className="relative drop-shadow-[0_0_35px_rgba(255,215,0,0.5)]"
+          className="relative drop-shadow-[0_16px_35px_rgba(15,23,42,0.35)]"
         >
           <canvas
             ref={canvasRef}
@@ -330,16 +380,24 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
           {spinFinished ? 'NEXT' : isSpinning ? '...' : 'SPIN'}
         </motion.button>
 
-        {/* 顶部主指针漂浮动画 (Floating Top Pointer) */}
-        <motion.div 
-          animate={{ y: [0, 8, 0] }}
-          transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
-          className="absolute -top-8 z-20 flex flex-col items-center drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)]"
+        {/* Picker Wheel-style pointer that reacts to every passing segment */}
+        <motion.div
+          key={pointerKick}
+          initial={{ rotate: 0 }}
+          animate={{ rotate: isSpinning ? [0, -22, 5, 0] : 0 }}
+          transition={{ duration: 0.16, ease: 'easeOut' }}
+          className="absolute -top-9 z-40 flex origin-top flex-col items-center drop-shadow-[0_5px_9px_rgba(15,23,42,0.35)]"
         >
-          <div className="w-10 h-10 bg-gradient-to-br from-yellow-100 via-yellow-400 to-yellow-700 rounded-full border-4 border-white shadow-lg z-30 relative flex items-center justify-center">
-            <div className="w-3 h-3 bg-red-600 rounded-full shadow-inner" />
-          </div>
-          <div className="w-0 h-0 border-l-[16px] border-r-[16px] border-t-[40px] border-l-transparent border-r-transparent border-t-yellow-400 -mt-2 z-20 drop-shadow-md" />
+          <motion.div
+            animate={{ backgroundColor: wheelColors[activeSegmentIndex % wheelColors.length] }}
+            className="relative z-30 flex h-12 w-12 items-center justify-center rounded-full border-4 border-white shadow-lg"
+          >
+            <div className="h-3 w-3 rounded-full bg-white/90 shadow-inner" />
+          </motion.div>
+          <motion.div
+            animate={{ borderTopColor: wheelColors[activeSegmentIndex % wheelColors.length] }}
+            className="z-20 -mt-2 h-0 w-0 border-l-[17px] border-r-[17px] border-t-[42px] border-l-transparent border-r-transparent drop-shadow-md"
+          />
         </motion.div>
       </div>
 
@@ -365,7 +423,7 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
             >
               <h2 className="text-4xl font-black text-red-600 mb-4 drop-shadow-sm">🎉 WINNER!</h2>
               <p className="text-gray-600 font-semibold mb-2">Congratulations, you have won</p>
-              <div className="bg-red-50 py-4 px-2 rounded-xl border border-red-100 mb-8 shadow-inner">
+              <div className="bg-transparent py-4 px-2 rounded-xl mb-8">
                 {winningPrize.imageUrl && (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img

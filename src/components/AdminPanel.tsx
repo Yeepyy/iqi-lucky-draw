@@ -22,6 +22,7 @@ import { Prize, Participant, DrawResult } from '@/types';
 import AcknowledgementLetter from '@/components/AcknowledgementLetter';
 import { deletePrizeImage, uploadPrizeImage } from '@/lib/prizeImages';
 import { supabase } from '@/config/supabase';
+import { DEFAULT_WHEEL_COLORS, normalizeWheelColors } from '@/lib/wheelColors';
 
 const AdminPanel: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'prizes' | 'participants' | 'results' | 'settings'>('prizes');
@@ -62,6 +63,7 @@ const AdminPanel: React.FC = () => {
     showUnit: true,
     showAgent: true,
   });
+  const [wheelColors, setWheelColors] = useState<string[]>(DEFAULT_WHEEL_COLORS);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
@@ -151,7 +153,12 @@ const AdminPanel: React.FC = () => {
 
       const fetchSettings = async () => {
         try {
-          setFormSettings(await getSetting('formFields', formSettings));
+          const [fields, colors] = await Promise.all([
+            getSetting('formFields', formSettings),
+            getSetting('wheelColors', DEFAULT_WHEEL_COLORS),
+          ]);
+          setFormSettings(fields);
+          setWheelColors(normalizeWheelColors(colors));
         } catch (e) {}
       };
 
@@ -177,6 +184,36 @@ const AdminPanel: React.FC = () => {
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!isAuthenticated || !isMounted) return;
+
+    const refreshAdminData = async () => {
+      try {
+        const [prizeData, participantData, resultData] = await Promise.all([
+          getAllPrizes(),
+          getAllParticipants(),
+          getAllDrawResults(),
+        ]);
+        setPrizes(prizeData);
+        setParticipants(participantData);
+        setDrawResults(resultData);
+      } catch (error) {
+        console.error('Error refreshing live admin data:', error);
+      }
+    };
+
+    const channel = supabase
+      .channel('admin-live-results')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'draw_results' }, refreshAdminData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'participants' }, refreshAdminData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'prizes' }, refreshAdminData)
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [isAuthenticated, isMounted]);
 
   const handleAddPrize = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -957,6 +994,88 @@ const AdminPanel: React.FC = () => {
 
         {activeTab === 'settings' && (
           <div className="max-w-3xl space-y-6">
+            <div className="rounded-lg bg-white shadow">
+              <div className="border-b border-gray-200 p-6">
+                <h2 className="text-xl font-bold text-gray-800">Wheel Color Settings</h2>
+                <p className="mt-1 text-sm text-gray-600">Choose any colors for the wheel. Colors repeat automatically when there are more prizes.</p>
+              </div>
+              <div className="space-y-5 p-6">
+                <div className="flex min-h-16 overflow-hidden rounded-xl border-4 border-white shadow-lg">
+                  {wheelColors.map((color, index) => (
+                    <div key={`${index}-${color}`} className="min-w-10 flex-1" style={{ backgroundColor: color }} />
+                  ))}
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {wheelColors.map((color, index) => (
+                    <div key={index} className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <input
+                        type="color"
+                        value={/^#[0-9a-f]{6}$/i.test(color) ? color : '#000000'}
+                        onChange={(event) => setWheelColors(wheelColors.map((item, itemIndex) => itemIndex === index ? event.target.value.toUpperCase() : item))}
+                        className="h-11 w-14 cursor-pointer rounded border-0 bg-transparent"
+                        aria-label={`Wheel color ${index + 1}`}
+                      />
+                      <input
+                        type="text"
+                        value={color}
+                        maxLength={7}
+                        onChange={(event) => setWheelColors(wheelColors.map((item, itemIndex) => itemIndex === index ? event.target.value.toUpperCase() : item))}
+                        className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 font-mono text-gray-900"
+                        aria-label={`Wheel color ${index + 1} hex value`}
+                      />
+                      <button
+                        type="button"
+                        disabled={wheelColors.length <= 2}
+                        onClick={() => setWheelColors(wheelColors.filter((_, itemIndex) => itemIndex !== index))}
+                        className="rounded-lg px-3 py-2 font-bold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-gray-300"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setWheelColors([...wheelColors, '#D8E2DC'])}
+                    className="rounded-lg border border-gray-300 px-4 py-2 font-semibold text-gray-700 hover:bg-gray-50"
+                  >
+                    + Add Color
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWheelColors([...DEFAULT_WHEEL_COLORS])}
+                    className="rounded-lg border border-gray-300 px-4 py-2 font-semibold text-gray-700 hover:bg-gray-50"
+                  >
+                    Restore Default
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const normalizedColors = normalizeWheelColors(wheelColors);
+                      if (normalizedColors !== wheelColors && wheelColors.some((color) => !/^#[0-9a-f]{6}$/i.test(color))) {
+                        toast.error('Please enter valid 6-digit Hex colors, for example #A8DADC');
+                        return;
+                      }
+                      setIsLoading(true);
+                      try {
+                        await saveSetting('wheelColors', normalizedColors);
+                        setWheelColors([...normalizedColors]);
+                        toast.success('Wheel colors saved successfully!');
+                      } catch {
+                        toast.error('Failed to save wheel colors');
+                      } finally {
+                        setIsLoading(false);
+                      }
+                    }}
+                    className="ml-auto rounded-lg bg-red-600 px-6 py-2 font-bold text-white hover:bg-red-700"
+                  >
+                    Save Wheel Colors
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div className="bg-white rounded-lg shadow">
             <div className="p-6 border-b border-gray-200">
               <h2 className="text-xl font-bold text-gray-800">Form Field Settings</h2>
@@ -1082,6 +1201,7 @@ const AdminPanel: React.FC = () => {
                     drawResult={selectedResult}
                     participant={participants.find(p => p.id === selectedResult.participantId)!}
                     prizeName={selectedResult.prizeName}
+                    prizeImageUrl={prizes.find(prize => prize.id === selectedResult.prizeId)?.imageUrl}
                     onClose={() => setSelectedResult(null)}
                   />
                 ) : (

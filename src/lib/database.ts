@@ -123,13 +123,14 @@ export async function addParticipant(data: Omit<Participant, 'id' | 'createdAt' 
   return mapParticipant(participant as DbParticipant);
 }
 
-export async function checkParticipantExists(icPassport: string, phoneNumber: string) {
-  const { data, error } = await supabase.rpc('participant_exists', {
+export async function checkParticipantDuplicates(icPassport: string, email: string, phoneNumber: string) {
+  const { data, error } = await supabase.rpc('participant_duplicate_fields', {
     p_ic_passport: icPassport,
+    p_email: email,
     p_phone_number: phoneNumber,
   });
   throwIfError(error);
-  return Boolean(data);
+  return (data || []) as string[];
 }
 
 export async function getParticipantByIC(icPassport: string) {
@@ -150,12 +151,12 @@ export async function updateParticipant(id: string, data: Partial<Participant>) 
 }
 
 export async function deleteParticipant(id: string) {
-  const { error } = await supabase.from('participants').delete().eq('id', id);
+  const { error } = await supabase.rpc('delete_participant', { p_participant_id: id });
   throwIfError(error);
 }
 
 export async function deleteAllParticipants() {
-  const { error } = await supabase.from('participants').delete().not('id', 'is', null);
+  const { error } = await supabase.rpc('delete_all_participants');
   throwIfError(error);
 }
 

@@ -12,6 +12,7 @@ interface AcknowledgementLetterProps {
   drawResult: DrawResult;
   participant: Participant;
   prizeName: string;
+  prizeImageUrl?: string;
   onClose?: () => void;
 }
 
@@ -19,6 +20,7 @@ const AcknowledgementLetter: React.FC<AcknowledgementLetterProps> = ({
   drawResult,
   participant,
   prizeName,
+  prizeImageUrl,
   onClose,
 }) => {
   const [isSignatureMode, setIsSignatureMode] = useState(false);
@@ -118,17 +120,102 @@ const AcknowledgementLetter: React.FC<AcknowledgementLetterProps> = ({
     if (!letterRef.current) return;
 
     setIsDownloading(true);
+    let pdfLetter: HTMLElement | null = null;
     try {
       const element = letterRef.current;
-      const canvas = await html2canvas(element, {
-        scale: 1.5, // 降低 scale 防止手机浏览器内存溢出导致崩溃
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        scrollY: -window.scrollY, // 修复截图时因为页面向下滚动导致底部被裁剪的问题
-        onclone: (clonedDoc) => {
-          clonedDoc.body.style.backgroundColor = '#000000';
-          clonedDoc.body.style.color = '#ffffff';
+      await document.fonts.ready;
+      await Promise.all(
+        Array.from(element.querySelectorAll('img')).map(async (image) => {
+          if (!image.complete) {
+            await new Promise<void>((resolve) => {
+              image.addEventListener('load', () => resolve(), { once: true });
+              image.addEventListener('error', () => resolve(), { once: true });
+            });
+          }
+          try {
+            await image.decode();
+          } catch {
+            // Some browsers do not support decode for every loaded image type.
+          }
+        })
+      );
+
+      pdfLetter = element.cloneNode(true) as HTMLElement;
+      pdfLetter.removeAttribute('style');
+      pdfLetter.style.position = 'fixed';
+      pdfLetter.style.left = '0';
+      pdfLetter.style.top = '0';
+      pdfLetter.style.zIndex = '-9999';
+      pdfLetter.style.pointerEvents = 'none';
+      pdfLetter.style.width = '794px';
+      pdfLetter.style.maxWidth = '794px';
+      pdfLetter.style.minHeight = '0';
+      pdfLetter.style.margin = '0';
+      pdfLetter.style.padding = '42px 52px';
+      pdfLetter.style.boxSizing = 'border-box';
+      pdfLetter.style.overflow = 'visible';
+      pdfLetter.style.transform = 'none';
+      pdfLetter.style.animation = 'none';
+      pdfLetter.style.display = 'block';
+      pdfLetter.style.backgroundColor = '#ffffff';
+      pdfLetter.style.color = '#000000';
+      pdfLetter.style.border = 'none';
+      pdfLetter.style.borderRadius = '0';
+      pdfLetter.style.boxShadow = 'none';
+      pdfLetter.style.fontFamily = 'Arial, Helvetica, sans-serif';
+      pdfLetter.style.fontSize = '15px';
+      pdfLetter.style.fontKerning = 'none';
+      Array.from(pdfLetter.children).forEach((child) => {
+        const section = child as HTMLElement;
+        section.style.flexShrink = '0';
+        section.style.marginBottom = '24px';
+      });
+      pdfLetter.querySelectorAll<HTMLElement>('*').forEach((child) => {
+        child.style.animation = 'none';
+        child.style.transition = 'none';
+        child.style.textRendering = 'geometricPrecision';
+        child.style.overflow = 'visible';
+      });
+      pdfLetter.querySelectorAll<HTMLElement>('p, h1, h2, h3, span, li').forEach((textElement) => {
+        textElement.style.lineHeight = '1.5';
+        textElement.style.paddingTop = '1px';
+        textElement.style.paddingBottom = '1px';
+      });
+      const header = pdfLetter.firstElementChild as HTMLElement | null;
+      if (header) {
+        header.style.marginBottom = '28px';
+        header.style.paddingBottom = '16px';
+        const logoWrapper = header.firstElementChild as HTMLElement | null;
+        if (logoWrapper) {
+          logoWrapper.style.marginBottom = '12px';
+          const logo = logoWrapper.querySelector<HTMLElement>('img');
+          if (logo) logo.style.height = '64px';
         }
+        const title = header.querySelector<HTMLElement>('h1');
+        if (title) {
+          title.style.fontSize = '30px';
+          title.style.lineHeight = '1.18';
+          title.style.marginBottom = '8px';
+        }
+        const subtitle = header.querySelector<HTMLElement>('p');
+        if (subtitle) {
+          subtitle.style.fontSize = '13px';
+          subtitle.style.lineHeight = '1.4';
+        }
+      }
+      const finalSection = pdfLetter.lastElementChild as HTMLElement | null;
+      if (finalSection) finalSection.style.marginBottom = '0';
+      document.body.appendChild(pdfLetter);
+
+      const canvas = await html2canvas(pdfLetter, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: false,
+        backgroundColor: '#ffffff',
+        logging: false,
+        scrollX: 0,
+        scrollY: 0,
+        windowWidth: 794,
       });
 
       const imgData = canvas.toDataURL('image/png');
@@ -136,18 +223,13 @@ const AcknowledgementLetter: React.FC<AcknowledgementLetterProps> = ({
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = pdf.internal.pageSize.getHeight();
 
-      let imgWidth = pdfWidth - 20; // 左右保留 10mm 边距
-      let imgHeight = (canvas.height * imgWidth) / canvas.width;
-
-      // 核心修复：如果长图的高度超出了 A4 纸的高度（上下留白），则等比例缩小以完整适应在一页内
-      if (imgHeight > pdfHeight - 20) {
-        imgHeight = pdfHeight - 20;
-        imgWidth = (canvas.width * imgHeight) / canvas.height;
-      }
-
-      // 动态计算水平居中位置，保证信件排版完美居中
+      const maxWidth = pdfWidth - 16;
+      const maxHeight = pdfHeight - 16;
+      const scaleToFit = Math.min(maxWidth / canvas.width, maxHeight / canvas.height);
+      const imgWidth = canvas.width * scaleToFit;
+      const imgHeight = canvas.height * scaleToFit;
       const marginX = (pdfWidth - imgWidth) / 2;
-      const marginY = 10;
+      const marginY = (pdfHeight - imgHeight) / 2;
 
       pdf.addImage(imgData, 'PNG', marginX, marginY, imgWidth, imgHeight);
       pdf.save(`Acknowledgement-${drawResult.referenceNumber || 'Letter'}.pdf`);
@@ -156,6 +238,7 @@ const AcknowledgementLetter: React.FC<AcknowledgementLetterProps> = ({
       console.error('Error generating PDF:', error);
       toast.error(`PDF Error: ${error?.message || 'Please try again on Chrome/Safari.'}`);
     } finally {
+      pdfLetter?.remove();
       setIsDownloading(false);
     }
   };
@@ -182,8 +265,9 @@ const AcknowledgementLetter: React.FC<AcknowledgementLetterProps> = ({
 
       <div
         ref={letterRef}
+        data-pdf-letter
         className="bg-white text-black rounded-lg shadow-lg p-12 border-4 border-black mb-6"
-        style={{ backgroundColor: '#ffffff', color: '#000000', borderColor: '#000000' }}
+        style={{ backgroundColor: '#ffffff', color: '#000000', borderColor: '#000000', fontFamily: 'Arial, Helvetica, sans-serif' }}
       >
         <div className="text-center mb-8 pb-6 border-b-2 border-black" style={{ borderColor: '#000000' }}>
           {/* Company Logo */}
@@ -215,7 +299,19 @@ const AcknowledgementLetter: React.FC<AcknowledgementLetterProps> = ({
 
           <div className="bg-gray-50 p-6 border-l-4 border-yellow-400 rounded" style={{ backgroundColor: '#f9fafb', borderColor: '#facc15' }}>
             <p className="font-bold text-lg mb-3" style={{ color: '#000000' }}>Prize Won:</p>
-            <p className="text-xl text-red-600 font-bold" style={{ color: '#dc2626' }}>{prizeName}</p>
+            <div className={`flex items-center gap-5 ${prizeImageUrl ? 'flex-col sm:flex-row' : ''}`}>
+              {prizeImageUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={prizeImageUrl}
+                  alt={prizeName}
+                  crossOrigin="anonymous"
+                  className="h-32 w-full max-w-48 shrink-0 rounded-lg border border-gray-200 bg-white object-contain p-2"
+                  style={{ backgroundColor: '#ffffff', borderColor: '#e5e7eb' }}
+                />
+              )}
+              <p className="text-xl text-red-600 font-bold" style={{ color: '#dc2626' }}>{prizeName}</p>
+            </div>
           </div>
 
           <p className="text-sm leading-relaxed" style={{ color: '#000000' }}>
