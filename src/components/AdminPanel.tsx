@@ -425,7 +425,15 @@ const AdminPanel: React.FC = () => {
     e.preventDefault();
     setIsLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword(loginForm);
+      const loginEmail = loginForm.email.trim().toLowerCase() === 'admin'
+        ? 'yeleesacheong@gmail.com'
+        : loginForm.email.trim();
+
+      const { error } = await supabase.auth.signInWithPassword({
+        email: loginEmail,
+        password: loginForm.password
+      });
+
       if (error) throw error;
       const { data: isAdmin, error: adminError } = await supabase.rpc('is_admin');
       if (adminError || !isAdmin) {
@@ -509,13 +517,13 @@ const AdminPanel: React.FC = () => {
           <p className="text-center text-gray-500 mb-8 font-medium">Please sign in to continue</p>
           <form onSubmit={handleLogin} className="space-y-5">
             <div>
-              <label className="block text-sm font-bold text-gray-700 mb-1.5 ml-1">Email</label>
+              <label className="block text-sm font-bold text-gray-700 mb-1.5 ml-1">Email or ID</label>
               <input
-                type="email"
+                type="text"
                 value={loginForm.email}
                 onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
                 className="w-full px-4 py-3 text-gray-900 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-600 focus:bg-white transition-colors"
-                placeholder="Enter admin email"
+                placeholder="Enter admin ID or email"
                 required
               />
             </div>
