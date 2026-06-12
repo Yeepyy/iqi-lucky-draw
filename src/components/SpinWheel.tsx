@@ -23,18 +23,36 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
   const SEGMENT_COUNT = prizes.length;
   const SEGMENT_ANGLE = 360 / SEGMENT_COUNT;
 
-  const drawCoveredImage = (
+  const drawContainedImage = (
     ctx: CanvasRenderingContext2D,
     image: HTMLImageElement,
-    x: number,
-    y: number,
-    width: number,
-    height: number
+    cx: number,
+    cy: number,
+    maxWidth: number,
+    maxHeight: number
   ) => {
-    const scale = Math.max(width / image.naturalWidth, height / image.naturalHeight);
+    const scale = Math.min(maxWidth / image.naturalWidth, maxHeight / image.naturalHeight);
     const drawWidth = image.naturalWidth * scale;
     const drawHeight = image.naturalHeight * scale;
-    ctx.drawImage(image, x + (width - drawWidth) / 2, y + (height - drawHeight) / 2, drawWidth, drawHeight);
+    
+    ctx.save();
+    // Draw white background/border for the image
+    ctx.fillStyle = '#FFFFFF';
+    ctx.shadowColor = 'rgba(0,0,0,0.4)';
+    ctx.shadowBlur = 8;
+    ctx.shadowOffsetY = 4;
+    const padding = 6;
+    ctx.beginPath();
+    ctx.roundRect(cx - drawWidth / 2 - padding, cy - drawHeight / 2 - padding, drawWidth + padding * 2, drawHeight + padding * 2, 8);
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+
+    ctx.beginPath();
+    ctx.roundRect(cx - drawWidth / 2 - padding, cy - drawHeight / 2 - padding, drawWidth + padding * 2, drawHeight + padding * 2, 8);
+    ctx.clip();
+    
+    ctx.drawImage(image, cx - drawWidth / 2, cy - drawHeight / 2, drawWidth, drawHeight);
+    ctx.restore();
   };
 
   // 跑马灯闪烁定时器 (Blinking effect timer)
@@ -78,7 +96,6 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
     const radius = canvas.width / 2;
     const centerX = radius;
     const centerY = radius;
-    const counterRotation = -((rotation % 360) * Math.PI) / 180;
 
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -116,11 +133,10 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
 
       const middleAngle = startAngle + (endAngle - startAngle) / 2;
       const prizeImage = prizeImages[prize.id];
-      if (prizeImage) {
-        const imageCenterX = centerX + Math.cos(middleAngle) * radius * 0.58;
-        const imageCenterY = centerY + Math.sin(middleAngle) * radius * 0.58;
-        const imageSize = radius * (SEGMENT_COUNT <= 4 ? 1.75 : SEGMENT_COUNT <= 8 ? 1.35 : 1.05);
+      
+      const halfAngle = (SEGMENT_ANGLE * Math.PI / 180) / 2;
 
+      if (prizeImage) {
         ctx.save();
         ctx.beginPath();
         ctx.moveTo(centerX, centerY);
@@ -128,46 +144,51 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
         ctx.closePath();
         ctx.clip();
 
-        ctx.translate(imageCenterX, imageCenterY);
-        ctx.rotate(counterRotation);
-        drawCoveredImage(
+        // Translate to center and rotate so negative Y points OUTWARDS along the middle angle
+        ctx.translate(centerX, centerY);
+        ctx.rotate(middleAngle + Math.PI / 2);
+
+        // Position image comfortably between the center button and the text
+        const imageCenterY = -radius * 0.5; 
+        const maxWidth = 2 * Math.abs(imageCenterY) * Math.tan(halfAngle) * 0.8;
+        const maxHeight = radius * 0.4;
+
+        drawContainedImage(
           ctx,
           prizeImage,
-          -imageSize * 0.7,
-          -imageSize * 0.7,
-          imageSize * 1.4,
-          imageSize * 1.4
+          0,
+          imageCenterY,
+          maxWidth,
+          maxHeight
         );
 
-        const shade = ctx.createRadialGradient(0, 0, 10, 0, 0, imageSize / 1.6);
-        shade.addColorStop(0, 'rgba(0,0,0,0)');
-        shade.addColorStop(1, 'rgba(0,0,0,0.34)');
-        ctx.fillStyle = shade;
-        ctx.fillRect(-imageSize, -imageSize, imageSize * 2, imageSize * 2);
         ctx.restore();
       }
 
       let text = prize.name;
       if (text.length > 20) text = text.substring(0, 18) + '...';
-      const textRadius = SEGMENT_COUNT <= 4 ? radius * 0.7 : radius * 0.67;
-      const textX = centerX + Math.cos(middleAngle) * textRadius;
-      const textY = centerY + Math.sin(middleAngle) * textRadius;
+      
+      // If there's an image, push text towards the outer rim to make room
+      const textRadius = prizeImage ? radius * 0.82 : (SEGMENT_COUNT <= 4 ? radius * 0.75 : radius * 0.72);
 
       ctx.save();
-      ctx.translate(textX, textY);
-      ctx.rotate(counterRotation);
+      ctx.translate(centerX, centerY);
+      ctx.rotate(middleAngle + Math.PI / 2);
+      
       ctx.font = `900 ${SEGMENT_COUNT <= 4 ? 18 : 14}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       const textWidth = ctx.measureText(text).width;
+      
       ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
       ctx.beginPath();
-      ctx.roundRect(-textWidth / 2 - 9, -15, textWidth + 18, 30, 9);
+      ctx.roundRect(-textWidth / 2 - 9, -textRadius - 15, textWidth + 18, 30, 9);
       ctx.fill();
+      
       ctx.fillStyle = '#FFFFFF';
       ctx.shadowColor = 'rgba(0,0,0,0.9)';
       ctx.shadowBlur = 5;
-      ctx.fillText(text, 0, 0);
+      ctx.fillText(text, 0, -textRadius);
       ctx.restore();
     });
 
@@ -219,7 +240,7 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
     ctx.shadowBlur = 10;
     ctx.fill();
     ctx.shadowBlur = 0; // Reset
-  }, [prizes, prizeImages, SEGMENT_ANGLE, blink, rotation]);
+  }, [prizes, prizeImages, SEGMENT_ANGLE, blink, SEGMENT_COUNT]);
 
   const handleSpin = () => {
     if (isSpinning || prizes.length === 0) return;
@@ -236,8 +257,10 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
     if (!isSpinning) return;
 
     const finalRotation = rotation % 360;
-    const normalizedRotation = (360 - finalRotation + 360) % 360;
-    const segmentIndex = Math.floor(normalizedRotation / SEGMENT_ANGLE) % SEGMENT_COUNT;
+    // Canvas 0 degrees is at 3 o'clock. The pointer is visually at 12 o'clock (270 degrees).
+    // Calculate which angle on the original unrotated wheel is currently at 270 degrees.
+    const pointerAngle = (270 - finalRotation + 360) % 360;
+    const segmentIndex = Math.floor(pointerAngle / SEGMENT_ANGLE) % SEGMENT_COUNT;
     const winner = prizes[segmentIndex];
 
     setWinningPrize(winner);
