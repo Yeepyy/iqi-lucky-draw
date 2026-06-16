@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, Suspense, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
 import toast, { Toaster } from 'react-hot-toast';
@@ -132,17 +132,6 @@ function LuckyDrawClient({ agentName }: { agentName: string }) {
             animate={{ opacity: 1, y: 0 }}
             className="text-center mb-12"
           >
-            {/* Main Company Logo */}
-            <div className="flex justify-center mb-6">
-              <img 
-                src="/logo.png" 
-                alt="Company Logo" 
-                className="h-24 md:h-32 object-contain drop-shadow-[0_0_15px_rgba(255,255,255,0.3)]"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = 'none';
-                }}
-              />
-            </div>
             <h1 className="text-5xl md:text-6xl font-extrabold mb-4 bg-clip-text text-transparent bg-gradient-to-r from-yellow-200 via-yellow-400 to-yellow-600 drop-shadow-[0_0_15px_rgba(212,175,55,0.4)] tracking-tight">
               Spin & Win Lucky Draw
             </h1>
@@ -225,6 +214,7 @@ function LuckyDrawClient({ agentName }: { agentName: string }) {
 function AgentPortal() {
   const [agentInput, setAgentInput] = useState('');
   const [clientLink, setClientLink] = useState('');
+  const clientLinkInputRef = useRef<HTMLInputElement>(null);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -236,9 +226,32 @@ function AgentPortal() {
     setClientLink(`${baseUrl}/?agent=${encodeURIComponent(agentInput.trim())}`);
   };
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(clientLink);
-    toast.success('Link copied to clipboard!');
+  const copyToClipboard = async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(clientLink);
+        toast.success('Link copied to clipboard!');
+        return;
+      }
+      throw new Error('Clipboard API unavailable');
+    } catch {
+      const input = clientLinkInputRef.current;
+      if (!input) {
+        toast.error('Copy failed. Please select the link manually.');
+        return;
+      }
+
+      input.focus();
+      input.select();
+      input.setSelectionRange(0, clientLink.length);
+
+      const copied = document.execCommand('copy');
+      if (copied) {
+        toast.success('Link copied to clipboard!');
+      } else {
+        toast('Please press Ctrl+C / Cmd+C to copy the selected link.', { icon: '📋' });
+      }
+    }
   };
 
   return (
@@ -256,17 +269,6 @@ function AgentPortal() {
         className="w-full max-w-md bg-black/60 backdrop-blur-md rounded-3xl shadow-[0_0_40px_rgba(0,0,0,0.6)] p-8 border border-gray-700/50 relative z-10"
       >
         <div className="text-center mb-8">
-          {/* Agent Portal Company Logo */}
-          <div className="flex justify-center mb-6">
-            <img 
-              src="/logo.png" 
-              alt="Company Logo" 
-              className="h-20 object-contain drop-shadow-[0_0_10px_rgba(255,255,255,0.2)]"
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = 'none';
-              }}
-            />
-          </div>
           <h1 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-200 via-yellow-400 to-yellow-600 mb-2 drop-shadow-md">Agent Portal</h1>
           <p className="text-gray-300 font-light">Generate your exclusive client lucky draw link</p>
         </div>
@@ -303,6 +305,7 @@ function AgentPortal() {
               </p>
               <div className="flex items-center gap-2">
                 <input
+                  ref={clientLinkInputRef}
                   type="text"
                   readOnly
                   value={clientLink}

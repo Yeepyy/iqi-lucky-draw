@@ -185,12 +185,6 @@ const AcknowledgementLetter: React.FC<AcknowledgementLetterProps> = ({
       if (header) {
         header.style.marginBottom = '28px';
         header.style.paddingBottom = '16px';
-        const logoWrapper = header.firstElementChild as HTMLElement | null;
-        if (logoWrapper) {
-          logoWrapper.style.marginBottom = '12px';
-          const logo = logoWrapper.querySelector<HTMLElement>('img');
-          if (logo) logo.style.height = '64px';
-        }
         const title = header.querySelector<HTMLElement>('h1');
         if (title) {
           title.style.fontSize = '30px';
@@ -270,17 +264,6 @@ const AcknowledgementLetter: React.FC<AcknowledgementLetterProps> = ({
         style={{ backgroundColor: '#ffffff', color: '#000000', borderColor: '#000000', fontFamily: 'Arial, Helvetica, sans-serif' }}
       >
         <div className="text-center mb-8 pb-6 border-b-2 border-black" style={{ borderColor: '#000000' }}>
-          {/* Company Logo */}
-          <div className="flex justify-center mb-6">
-            <img 
-              src="/logo.png" 
-              alt="Company Logo" 
-              className="h-20 object-contain"
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = 'none';
-              }}
-            />
-          </div>
           <h1 className="text-3xl font-bold text-black mb-2" style={{ color: '#000000' }}>LUCKY DRAW PRIZE ACKNOWLEDGEMENT LETTER</h1>
           <p className="text-sm text-gray-600" style={{ color: '#4b5563' }}>Property Client Appreciation Campaign</p>
         </div>

@@ -20,21 +20,26 @@ import {
 } from '@/lib/database';
 import { Prize, Participant, DrawResult } from '@/types';
 import AcknowledgementLetter from '@/components/AcknowledgementLetter';
-import { deletePrizeImage, uploadPrizeImage } from '@/lib/prizeImages';
+import SpinWheel from '@/components/SpinWheel';
+import { deletePrizeImage, preparePrizeImageFile, uploadPrizeImage } from '@/lib/prizeImages';
 import { supabase } from '@/config/supabase';
 import { DEFAULT_WHEEL_COLORS, normalizeWheelColors } from '@/lib/wheelColors';
 
 const AdminPanel: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'prizes' | 'participants' | 'results' | 'settings'>('prizes');
+  const [activeTab, setActiveTab] = useState<'prizes' | 'participants' | 'results' | 'testing' | 'settings'>('prizes');
   const [prizes, setPrizes] = useState<Prize[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [drawResults, setDrawResults] = useState<DrawResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isTestingSpin, setIsTestingSpin] = useState(false);
+  const [testWheelKey, setTestWheelKey] = useState(0);
+  const [testWinningPrize, setTestWinningPrize] = useState<Prize | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [showPrizeForm, setShowPrizeForm] = useState(false);
   const [editingPrize, setEditingPrize] = useState<Prize | null>(null);
   const [prizeImageFile, setPrizeImageFile] = useState<File | null>(null);
   const [prizeImagePreview, setPrizeImagePreview] = useState('');
+  const [isProcessingPrizeImage, setIsProcessingPrizeImage] = useState(false);
   const [prizeForm, setPrizeForm] = useState({
     name: '',
     probability: 10,
@@ -117,6 +122,13 @@ const AdminPanel: React.FC = () => {
   const sortedPrizes = sortedItems(prizes) as Prize[];
   const sortedParticipants = sortedItems(filteredParticipants) as Participant[];
   const sortedResults = sortedItems(drawResults) as DrawResult[];
+  const adminTabs = [
+    { id: 'prizes', label: 'Prizes' },
+    { id: 'participants', label: 'Participants' },
+    { id: 'results', label: 'Results' },
+    { id: 'testing', label: 'Testing Spin' },
+    { id: 'settings', label: 'Settings' },
+  ] as const;
   // ==============================================================================
 
   useEffect(() => {
@@ -304,7 +316,7 @@ const AdminPanel: React.FC = () => {
     setEditingPrize(null);
   };
 
-  const handlePrizeImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePrizeImageChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -319,8 +331,19 @@ const AdminPanel: React.FC = () => {
       return;
     }
 
-    setPrizeImageFile(file);
-    setPrizeImagePreview(URL.createObjectURL(file));
+    setIsProcessingPrizeImage(true);
+    try {
+      const preparedFile = await preparePrizeImageFile(file);
+      setPrizeImageFile(preparedFile);
+      setPrizeImagePreview(URL.createObjectURL(preparedFile));
+      toast.success('Image compressed successfully');
+    } catch (error) {
+      console.error('Error preparing prize image:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to process image');
+      event.target.value = '';
+    } finally {
+      setIsProcessingPrizeImage(false);
+    }
   };
 
   const handleDeleteParticipant = async (id: string) => {
@@ -569,21 +592,21 @@ const AdminPanel: React.FC = () => {
         </div>
 
         <div className="flex gap-2 mb-6 border-b border-gray-200">
-          {(['prizes', 'participants', 'results', 'settings'] as const).map((tab) => (
+          {adminTabs.map((tab) => (
             <button
-              key={tab}
+              key={tab.id}
               onClick={() => {
-                setActiveTab(tab);
+                setActiveTab(tab.id);
                 setSortConfig(null); // Reset sort when changing tabs
                 setSearchTerm('');
               }}
               className={`px-6 py-3 font-semibold border-b-4 transition-all ${
-                activeTab === tab
+                activeTab === tab.id
                   ? 'text-red-600 border-red-600'
                   : 'text-gray-600 border-transparent hover:text-gray-800'
               }`}
             >
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              {tab.label}
             </button>
           ))}
         </div>
@@ -686,11 +709,17 @@ const AdminPanel: React.FC = () => {
                               type="file"
                               accept="image/jpeg,image/png,image/webp"
                               onChange={handlePrizeImageChange}
+                              disabled={isProcessingPrizeImage}
                               className="block w-full text-sm text-gray-700 file:mr-4 file:rounded-lg file:border-0 file:bg-red-600 file:px-4 file:py-2 file:font-semibold file:text-white hover:file:bg-red-700"
                             />
                             <p className="mt-2 text-xs text-gray-500">
-                              JPG, PNG, or WebP up to 15 MB. Photos are automatically compressed to WebP before uploading.
+                              JPG, PNG, or WebP up to 15 MB. Images are compressed to WebP before upload.
                             </p>
+                            {isProcessingPrizeImage && (
+                              <p className="mt-2 text-xs font-semibold text-red-600">
+                                Compressing image...
+                              </p>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -996,6 +1025,63 @@ const AdminPanel: React.FC = () => {
               )})}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'testing' && (
+          <div className="space-y-6">
+            <div className="rounded-2xl border border-yellow-200 bg-gradient-to-br from-gray-950 via-gray-900 to-black p-6 shadow-xl">
+              <div className="mb-6 text-center">
+                <h2 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-100 via-yellow-400 to-yellow-600">
+                  Testing Spin Wheel
+                </h2>
+                <p className="mt-2 text-sm text-gray-300">
+                  Test mode only. It will not create participants, results, or increase current winners.
+                </p>
+              </div>
+
+              {prizes.length > 0 ? (
+                <>
+                  <SpinWheel
+                    key={testWheelKey}
+                    prizes={prizes}
+                    onSpinStart={() => {
+                      setTestWinningPrize(null);
+                      setIsTestingSpin(true);
+                    }}
+                    onSpinComplete={(prize) => {
+                      setIsTestingSpin(false);
+                      setTestWinningPrize(prize);
+                      setTestWheelKey((key) => key + 1);
+                      toast.success(`Testing result: ${prize.name}`);
+                    }}
+                    isSpinning={isTestingSpin}
+                    colors={wheelColors}
+                  />
+
+                  {testWinningPrize && (
+                    <div className="mx-auto mt-2 max-w-xl rounded-2xl border border-yellow-300/40 bg-white p-5 text-center shadow-lg">
+                      <p className="text-sm font-bold uppercase tracking-[0.2em] text-yellow-700">Last Testing Result</p>
+                      <div className="mt-3 flex items-center justify-center gap-4">
+                        {testWinningPrize.imageUrl && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={testWinningPrize.imageUrl}
+                            alt={testWinningPrize.name}
+                            className="h-20 w-20 rounded-xl border border-yellow-200 bg-white object-contain p-1"
+                          />
+                        )}
+                        <p className="text-xl font-black text-gray-900">{testWinningPrize.name}</p>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="rounded-xl border border-yellow-300/30 bg-white/10 p-8 text-center text-gray-200">
+                  Please add prizes first, then you can test the wheel here.
+                </div>
+              )}
             </div>
           </div>
         )}

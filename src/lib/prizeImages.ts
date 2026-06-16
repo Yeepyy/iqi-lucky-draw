@@ -46,8 +46,17 @@ export async function compressPrizeImage(file: File): Promise<Blob> {
   return blob;
 }
 
+export async function preparePrizeImageFile(file: File): Promise<File> {
+  const blob = await compressPrizeImage(file);
+  return new File([blob], `${file.name.replace(/\.[^.]+$/, '') || 'prize'}-compressed.webp`, {
+    type: 'image/webp',
+  });
+}
+
 export async function uploadPrizeImage(file: File) {
-  const compressedImage = await compressPrizeImage(file);
+  const compressedImage = file.type === 'image/webp' && file.name.endsWith('-compressed.webp')
+    ? file
+    : await compressPrizeImage(file);
   const imagePath = `${crypto.randomUUID()}.webp`;
   const { error } = await supabase.storage.from(BUCKET).upload(imagePath, compressedImage, {
     contentType: 'image/webp',

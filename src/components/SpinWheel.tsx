@@ -77,36 +77,21 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
     setTimeout(() => playTone(880, 0.32, 0.1), 140);
   };
 
-  const drawContainedImage = (
+  const drawFitImage = (
     ctx: CanvasRenderingContext2D,
     image: HTMLImageElement,
-    cx: number,
-    cy: number,
-    maxWidth: number,
-    maxHeight: number
+    x: number,
+    y: number,
+    width: number,
+    height: number
   ) => {
-    const scale = Math.min(maxWidth / image.naturalWidth, maxHeight / image.naturalHeight);
+    const scale = Math.min(width / image.naturalWidth, height / image.naturalHeight);
     const drawWidth = image.naturalWidth * scale;
     const drawHeight = image.naturalHeight * scale;
-    
-    ctx.save();
-    // Draw white background/border for the image
-    ctx.fillStyle = '#FFFFFF';
-    ctx.shadowColor = 'rgba(0,0,0,0.4)';
-    ctx.shadowBlur = 8;
-    ctx.shadowOffsetY = 4;
-    const padding = 6;
-    ctx.beginPath();
-    ctx.roundRect(cx - drawWidth / 2 - padding, cy - drawHeight / 2 - padding, drawWidth + padding * 2, drawHeight + padding * 2, 8);
-    ctx.fill();
-    ctx.shadowColor = 'transparent';
+    const drawX = x + (width - drawWidth) / 2;
+    const drawY = y + (height - drawHeight) / 2;
 
-    ctx.beginPath();
-    ctx.roundRect(cx - drawWidth / 2 - padding, cy - drawHeight / 2 - padding, drawWidth + padding * 2, drawHeight + padding * 2, 8);
-    ctx.clip();
-    
-    ctx.drawImage(image, cx - drawWidth / 2, cy - drawHeight / 2, drawWidth, drawHeight);
-    ctx.restore();
+    ctx.drawImage(image, drawX, drawY, drawWidth, drawHeight);
   };
 
   // 跑马灯闪烁定时器 (Blinking effect timer)
@@ -158,13 +143,21 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Create Metallic Gold Gradient for Rims and Lines
+    // Premium metallic gold gradients for the rim and center.
     const goldGradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-    goldGradient.addColorStop(0, '#BF953F');
-    goldGradient.addColorStop(0.25, '#FCF6BA');
-    goldGradient.addColorStop(0.5, '#B38728');
-    goldGradient.addColorStop(0.75, '#FBF5B7');
-    goldGradient.addColorStop(1, '#AA771C');
+    goldGradient.addColorStop(0, '#7A4A00');
+    goldGradient.addColorStop(0.16, '#F6D365');
+    goldGradient.addColorStop(0.32, '#FFF6B7');
+    goldGradient.addColorStop(0.5, '#C89116');
+    goldGradient.addColorStop(0.68, '#FFE98A');
+    goldGradient.addColorStop(0.84, '#A96E00');
+    goldGradient.addColorStop(1, '#FFF1A8');
+
+    const rimHighlight = ctx.createLinearGradient(canvas.width, 0, 0, canvas.height);
+    rimHighlight.addColorStop(0, 'rgba(255,255,255,0.95)');
+    rimHighlight.addColorStop(0.28, 'rgba(255,236,145,0.55)');
+    rimHighlight.addColorStop(0.55, 'rgba(112,72,0,0.35)');
+    rimHighlight.addColorStop(1, 'rgba(255,255,255,0.72)');
 
     // Draw wheel segments
     prizes.forEach((prize, index) => {
@@ -186,8 +179,6 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
       const middleAngle = startAngle + (endAngle - startAngle) / 2;
       const prizeImage = prizeImages[prize.id];
       
-      const halfAngle = (SEGMENT_ANGLE * Math.PI / 180) / 2;
-
       if (prizeImage) {
         ctx.save();
         ctx.beginPath();
@@ -196,66 +187,55 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
         ctx.closePath();
         ctx.clip();
 
-        // Translate to center and rotate so negative Y points OUTWARDS along the middle angle
         ctx.translate(centerX, centerY);
         ctx.rotate(middleAngle + Math.PI / 2);
 
-        // Position image comfortably between the center button and the text
-        const imageCenterY = -radius * 0.5; 
-        const maxWidth = 2 * Math.abs(imageCenterY) * Math.tan(halfAngle) * 0.8;
-        const maxHeight = radius * 0.4;
+        const halfAngle = (SEGMENT_ANGLE * Math.PI) / 360;
+        const imageHeight = radius * 0.56;
+        const imageCenterY = -radius * 0.6;
+        const narrowestY = Math.abs(imageCenterY + imageHeight / 2);
+        const segmentWidth = Math.max(54, Math.min(radius * 0.9, 2 * narrowestY * Math.tan(halfAngle) * 0.96));
 
-        drawContainedImage(
+        drawFitImage(
           ctx,
           prizeImage,
-          0,
-          imageCenterY,
-          maxWidth,
-          maxHeight
+          -segmentWidth / 2,
+          imageCenterY - imageHeight / 2,
+          segmentWidth,
+          imageHeight
         );
-
         ctx.restore();
       }
-
-      let text = prize.name;
-      if (text.length > 20) text = text.substring(0, 18) + '...';
-      
-      // If there's an image, push text towards the outer rim to make room
-      const textRadius = prizeImage ? radius * 0.82 : (SEGMENT_COUNT <= 4 ? radius * 0.75 : radius * 0.72);
-
-      ctx.save();
-      ctx.translate(centerX, centerY);
-      ctx.rotate(middleAngle + Math.PI / 2);
-      
-      ctx.font = `900 ${SEGMENT_COUNT <= 4 ? 18 : 14}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      const textWidth = ctx.measureText(text).width;
-      
-      ctx.fillStyle = 'rgba(30, 41, 59, 0.68)';
-      ctx.beginPath();
-      ctx.roundRect(-textWidth / 2 - 9, -textRadius - 15, textWidth + 18, 30, 9);
-      ctx.fill();
-      
-      ctx.fillStyle = '#FFFFFF';
-      ctx.shadowColor = 'rgba(0,0,0,0.9)';
-      ctx.shadowBlur = 5;
-      ctx.fillText(text, 0, -textRadius);
-      ctx.restore();
     });
 
-    // Draw Thick Golden Outer Rim
+    // Draw premium glowing gold outer rim
     ctx.beginPath();
-    ctx.arc(centerX, centerY, radius - 7, 0, 2 * Math.PI);
-    ctx.strokeStyle = '#F8E7B0';
-    ctx.lineWidth = 13;
+    ctx.arc(centerX, centerY, radius - 9, 0, 2 * Math.PI);
+    ctx.strokeStyle = goldGradient;
+    ctx.lineWidth = 18;
+    ctx.shadowColor = 'rgba(255, 215, 0, 0.9)';
+    ctx.shadowBlur = 24;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius - 9, 0, 2 * Math.PI);
+    ctx.strokeStyle = rimHighlight;
+    ctx.lineWidth = 6;
     ctx.stroke();
 
-    // Inner Rim Highlight
+    // Inner rim shadow gives the gold ring depth.
     ctx.beginPath();
-    ctx.arc(centerX, centerY, radius - 14, 0, 2 * Math.PI);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-    ctx.lineWidth = 1;
+    ctx.arc(centerX, centerY, radius - 20, 0, 2 * Math.PI);
+    ctx.strokeStyle = 'rgba(91, 54, 0, 0.35)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    // Crisp outer sparkle line.
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius - 1.5, 0, 2 * Math.PI);
+    ctx.strokeStyle = 'rgba(255, 249, 205, 0.95)';
+    ctx.lineWidth = 2;
     ctx.stroke();
 
     // Draw Glowing Pegs (Lightbulbs) on the rim
@@ -355,13 +335,13 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
           }}
           onUpdate={(latest) => handleWheelUpdate(Number(latest.rotate))}
           onAnimationComplete={handleAnimationComplete}
-          className="relative drop-shadow-[0_16px_35px_rgba(15,23,42,0.35)]"
+          className="relative drop-shadow-[0_0_34px_rgba(255,215,0,0.5)]"
         >
           <canvas
             ref={canvasRef}
-            width={400}
-            height={400}
-            className="rounded-full"
+            width={520}
+            height={520}
+            className="h-[520px] w-[520px] max-h-[82vw] max-w-[82vw] rounded-full"
           />
         </motion.div>
 
@@ -371,7 +351,7 @@ const SpinWheel: React.FC<SpinWheelProps> = ({ prizes, onSpinStart, onSpinComple
           disabled={isSpinning && !spinFinished}
           whileHover={!isSpinning ? { scale: 1.1 } : {}}
           whileTap={!isSpinning ? { scale: 0.95 } : {}}
-          className={`absolute z-30 w-24 h-24 rounded-full font-black text-2xl tracking-wider shadow-[0_0_30px_rgba(255,215,0,0.8)] border-4 border-yellow-200 flex items-center justify-center transition-all ${
+          className={`absolute z-30 w-28 h-28 rounded-full font-black text-2xl tracking-wider shadow-[0_0_30px_rgba(255,215,0,0.8)] border-4 border-yellow-200 flex items-center justify-center transition-all ${
             isSpinning && !spinFinished
               ? 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-600 shadow-none'
               : 'bg-gradient-to-b from-yellow-200 via-yellow-400 to-yellow-600 text-black hover:shadow-[0_0_50px_rgba(255,215,0,1)] hover:from-white hover:via-yellow-300 hover:to-yellow-500 cursor-pointer'

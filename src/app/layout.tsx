@@ -15,9 +15,6 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Spin & Win - Lucky Draw",
   description: "Exclusive lucky draw rewards for our valued property clients",
-  icons: {
-    icon: "/logo.png",
-  },
 };
 
 export const viewport: Viewport = {
